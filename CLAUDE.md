@@ -21,6 +21,12 @@ Note: `npx expo install` needs api.expo.dev; in the cloud sandbox it is blocked,
 - Prompt + output validation live in `src/tagging/schema.ts` (shared by server, client and tests). Fields below confidence 0.6 are flagged "לבדיקה".
 - Weather: `src/weather/weather.ts` uses Open-Meteo hourly forecast (no key) for the chosen city, else a per-city seasonal estimate, plus a per-day manual override. Weather only ranks outfits after occasion/dressiness filtering; cold evenings add a layer (outerwear), flagged missing if the closet has none.
 
+## Editor rules (recognition fix)
+- A NEW item starts with nothing chosen (no default חולצות/לבן). Category and color are required to save; unrecognized fields stay empty and are flagged "לבדיקה"; empty dressiness/occasions fall back to category defaults only at save time, with a visible hint.
+- The editor pings `GET /health` of the recognition server and says in Hebrew why analysis is unavailable (not configured in this build / server not responding / server has no API key).
+- Recognition tags the MAIN foreground item (prompt in `src/tagging/schema.ts`), may return a brand/model guess (caption/logo/shape) that is only a suggestion until the user taps אישור, and flags `multiple` when several garments are visible. Uploads keep the longer edge at 1400px.
+- The deployed Pages build only has recognition if repo variable `RECOGNITION_URL` (https) was set when the workflow ran; the workflow prints a warning when it is empty.
+
 ## Adding items: photo, product link, receipt
 - `src/components/AddItemSheet.tsx` offers צילום או גלריה / הדבקת קישור למוצר / סריקת קבלה; all three end in the same editable tag editor (`ItemEditor`).
 - Link: `server` POST `/product` fetches a public HTTPS page (`server/safeFetch.ts`: https only, no credentials, port 443, DNS result must be public, every redirect re-validated, size/time limits) and `src/import/parseProduct.ts` reads JSON-LD Product / Open Graph (name, image, color, reference). Blocked/removed/empty pages keep the link and continue with a screenshot or manual entry.

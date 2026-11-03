@@ -19,6 +19,21 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
+      - name: Check recognition server setting
+        env:
+          URL: ${{ vars.RECOGNITION_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "::warning title=Recognition server not configured::Repository variable RECOGNITION_URL is empty, so the deployed app cannot analyze photos (manual tagging only)."
+            echo "### Recognition server NOT configured" >> "$GITHUB_STEP_SUMMARY"
+            echo "Set Settings > Secrets and variables > Actions > Variables > RECOGNITION_URL to the https URL of the server, then re-run this workflow." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$URL" != https://* ]]; then
+            echo "::error title=RECOGNITION_URL must start with https://::The Pages site is https, so the browser blocks http servers."
+            exit 1
+          else
+            echo "Recognition server configured: $URL"
+            echo "### Recognition server configured: $URL" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - run: npx expo export --platform web
         env:
           CI: '1'

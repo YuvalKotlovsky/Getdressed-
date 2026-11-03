@@ -2,13 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { Alert, Image, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { COLORS, theme } from '../theme';
-import { categoryLabel, dressinessLabel, occasionLabel, partLabel, weatherLabel } from '../i18n';
+import { SUBTYPES, categoryLabel, dressinessLabel, occasionLabel, partLabel, weatherLabel } from '../i18n';
 import { cardStyle, rowDir, text } from '../ui';
 import { Chip } from './Chip';
 import { Btn } from './Btn';
 import { defaultsFor } from '../tagging/tagger';
-import { createRecognitionTagger, RECOGNITION_URL, RecognitionError } from '../tagging/recognition';
-import type { TagField, TagSuggestion } from '../tagging/schema';
+import { checkRecognitionServer, createRecognitionTagger, RECOGNITION_URL, RecognitionError, type RecognitionStatus } from '../tagging/recognition';
+import { partForCategory, type BrandGuess, type TagField, type TagSuggestion } from '../tagging/schema';
 import { persistPhoto, type PreparedPhoto } from '../storage/persist';
 import { useApp } from '../state/AppContext';
 import type { Category, Dressiness, Item, Occasion, Part, Weather } from '../types';
@@ -16,26 +16,41 @@ import type { Category, Dressiness, Item, Occasion, Part, Weather } from '../typ
 const CATS = Object.keys(categoryLabel) as Category[];
 const OCCS: Occasion[] = ['work', 'workout', 'casual', 'evening', 'formal'];
 const WEATHERS: Weather[] = ['hot', 'mild', 'cold'];
-const blank = (): Item => ({ id: `u-${Date.now()}`, name: '', category: 'top', available: true, color: 'white', ...defaultsFor('top') });
+
+/** What the form edits. A NEW item starts with nothing chosen: unrecognized fields stay empty until the user fills them. */
+type Draft = Omit<Item, 'category' | 'part' | 'color' | 'dressiness'> & { category?: Category; part?: Part; color?: string; dressiness?: Dressiness };
+const blank = (): Draft => ({ id: `u-${Date.now()}`, name: '', available: true, occasions: [] });
 
 type Phase = 'none' | 'consent' | 'running' | 'done' | 'failed';
+const FIELD_LABEL: Record<TagField, string> = { category: 'קטגוריה', subtype: 'סוג הבגד', color: 'צבע', occasions: 'אירועים', dressiness: 'רמת רשמיות', weather: 'מזג אוויר' };
 
-const Label = ({ children, flag }: { children: string; flag?: boolean }) => (
+const Label = ({ children, flag, required }: { children: string; flag?: boolean; required?: boolean }) => (
   <View style={{ flexDirection: rowDir, alignItems: 'center', gap: 8, marginTop: 16, marginBottom: 8 }}>
     <Text style={text(13, '600', theme.muted)}>{children}</Text>
-    {flag && <Text style={{ fontSize: 11, color: theme.warn, borderWidth: 1, borderColor: theme.warn, borderRadius: 8, paddingHorizontal: 6 }}>לבדיקה</Text>}
+    {required && <Text style={{ fontSize: 11, color: theme.warn, borderWidth: 1, borderColor: theme.warn, borderRadius: 8, paddingHorizontal: 6 }}>חובה</Text>}
+    {flag && !required && <Text style={{ fontSize: 11, color: theme.warn, borderWidth: 1, borderColor: theme.warn, borderRadius: 8, paddingHorizontal: 6 }}>לבדיקה</Text>}
   </View>
 );
+
+const STATUS_TEXT: Record<Exclude<RecognitionStatus, 'ready' | 'checking'>, string> = {
+  unconfigured: 'זיהוי אוטומטי לא פעיל בגרסה הזו (לא הוגדר שרת זיהוי), ולכן שום דבר לא נשלח ולא הוצעו תגיות. מלאו את הפרטים ידנית.',
+  down: 'שרת הזיהוי לא מגיב כרגע. מלאו את הפרטים ידנית, או נסו שוב מאוחר יותר.',
+  nokey: 'שרת הזיהוי פועל אבל חסר בו מפתח לשירות הבינה המלאכותית, ולכן אין הצעות. מלאו את הפרטים ידנית.',
+};
 
 export interface EditorInitial { item: Partial<Item>; photo?: PreparedPhoto; uncertain?: TagField[]; note?: string }
 
 export function ItemEditor({ item, visible, onClose, initial }: { item: Item | null; visible: boolean; onClose: () => void; initial?: EditorInitial | null }) {
   const { saveItem, deleteItem } = useApp();
-  const [it, setIt] = useState<Item>(blank());
+  const [it, setIt] = useState<Draft>(blank());
   const [photo, setPhoto] = useState<PreparedPhoto | null>(null);
   const [phase, setPhase] = useState<Phase>('none');
   const [uncertain, setUncertain] = useState<TagField[]>([]);
   const [note, setNote] = useState('');
+  const [status, setStatus] = useState<RecognitionStatus>('checking');
+  const [guess, setGuess] = useState<BrandGuess | null>(null);
+  const [multiple, setMultiple] = useState(false);
+  const [showErrors, setShowErrors] = useState(false);
   const isNew = !item;
 
   useEffect(() => {
@@ -44,11 +59,17 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
     else if (initial) setIt({ ...blank(), ...initial.item, photoUri: initial.photo?.uri ?? initial.item.photoUri });
     else setIt(blank());
     setPhoto(initial?.photo ?? null);
-    setPhase('none');
-    setUncertain(initial?.uncertain ?? []);
-    setNote(initial?.note ?? '');
+    setPhase('none'); setUncertain(initial?.uncertain ?? []); setNote(initial?.note ?? '');
+    setGuess(null); setMultiple(false); setShowErrors(false);
+    setStatus('checking');
+    let live = true;
+    checkRecognitionServer().then((s) => { if (live) setStatus(s); });
+    return () => { live = false; };
   }, [visible, item, initial]);
-  const set = (p: Partial<Item>) => setIt((x) => ({ ...x, ...p }));
+
+  useEffect(() => { if (status !== 'ready' && status !== 'checking') setPhase((ph) => (ph === 'consent' ? 'none' : ph)); }, [status]);
+
+  const set = (p: Partial<Draft>) => setIt((x) => ({ ...x, ...p }));
   const flag = (f: TagField) => uncertain.includes(f);
   const unflag = (f: TagField) => setUncertain((u) => u.filter((x) => x !== f));
 
@@ -59,21 +80,20 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
       const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.8, allowsEditing: true };
       const res = camera ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
       if (res.canceled || !res.assets[0]) return;
-      const prepared = await persistPhoto(res.assets[0].uri);
+      const a = res.assets[0];
+      const prepared = await persistPhoto(a.uri, a.width && a.height ? { width: a.width, height: a.height } : undefined);
       setPhoto(prepared);
       set({ photoUri: prepared.uri });
-      setUncertain([]);
-      setNote('');
-      setPhase(RECOGNITION_URL ? 'consent' : 'none');
+      setUncertain([]); setNote(''); setGuess(null); setMultiple(false);
+      setPhase(status === 'ready' || status === 'checking' ? 'consent' : 'none'); // 'checking': still pinging; analysis fails gracefully if the server is down
     } catch {
       Alert.alert('לא הצלחנו לטעון את התמונה', 'אפשר לתייג ידנית ולנסות שוב.');
     }
   };
 
   const applySuggestion = (s: TagSuggestion) => {
-    const next: Partial<Item> = {};
-    if (s.category) next.category = s.category;
-    if (s.part) next.part = s.part;
+    const next: Partial<Draft> = {};
+    if (s.category) { next.category = s.category; next.part = s.part ?? partForCategory(s.category, s.subtype); }
     if (s.subtype) next.subtype = s.subtype;
     if (s.color) next.color = s.color;
     if (s.dressiness) next.dressiness = s.dressiness;
@@ -81,6 +101,8 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
     if (s.weather) next.weather = s.weather;
     set(next);
     setUncertain(s.uncertain ?? []);
+    setGuess(s.brand ?? null);
+    setMultiple(!!s.multiple);
   };
 
   const analyze = async () => {
@@ -93,13 +115,12 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
     } catch (e) {
       setPhase('failed');
       const kind = e instanceof RecognitionError ? e.kind : 'server';
-      setNote(kind === 'not_garment' ? 'לא זוהה בגד אחד בתמונה. אפשר לצלם שוב או לתייג ידנית.' : kind === 'network' ? 'אין חיבור לשירות הזיהוי. אפשר לתייג ידנית.' : 'שירות הזיהוי לא זמין כרגע. אפשר לתייג ידנית.');
+      setNote(kind === 'not_garment' ? 'לא זוהה בגד אחד בתמונה. אפשר לצלם שוב או למלא ידנית.' : kind === 'network' ? 'אין חיבור לשירות הזיהוי. לא הוצעו תגיות, מלאו ידנית.' : 'שירות הזיהוי נכשל או לא זמין כרגע. לא הוצעו תגיות, מלאו ידנית.');
     }
   };
 
   const setCategory = (c: Category) => {
-    const d = defaultsFor(c);
-    set({ category: c, part: d.part, ...(isNew && phase !== 'done' ? { dressiness: d.dressiness, occasions: d.occasions } : {}) });
+    set({ category: c, part: partForCategory(c, it.subtype), subtype: it.category && it.category !== c ? undefined : it.subtype });
     unflag('category');
   };
   const toggleOcc = (o: Occasion) => { set({ occasions: it.occasions.includes(o) ? it.occasions.filter((x) => x !== o) : [...it.occasions, o] }); unflag('occasions'); };
@@ -109,12 +130,22 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
     unflag('weather');
   };
 
+  const missing = { category: !it.category, color: !it.color };
   const save = () => {
-    const name = it.name.trim() || `${it.subtype || categoryLabel[it.category]} ${COLORS[it.color]?.label ?? ''}`.trim();
-    saveItem({ ...it, name });
+    if (missing.category || missing.color) { setShowErrors(true); return; }
+    const category = it.category!;
+    const d = defaultsFor(category);
+    const auto = it.brand ? `${it.brand}${it.model ? ' ' + it.model : ''} ${COLORS[it.color!]?.label ?? ''}` : `${it.subtype || categoryLabel[category]} ${COLORS[it.color!]?.label ?? ''}`;
+    saveItem({
+      ...it, category, color: it.color!, part: it.part ?? partForCategory(category, it.subtype),
+      dressiness: it.dressiness ?? d.dressiness,
+      occasions: it.occasions.length ? it.occasions : d.occasions,
+      name: it.name.trim() || auto.trim(),
+    });
     onClose();
   };
   const remove = () => { deleteItem(it.id); onClose(); };
+  const unrecognized = (['category', 'subtype', 'color', 'occasions', 'dressiness', 'weather'] as TagField[]).filter((f) => uncertain.includes(f));
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -130,12 +161,15 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
               <Btn label="מהגלריה" kind="ghost" onPress={() => pick(false)} />
               <Btn label="צילום" kind="ghost" onPress={() => pick(true)} />
             </View>
-            <Text style={[text(12, '400', theme.muted), { marginTop: 8 }]}>
-              התמונה נשמרת במכשיר בלבד. בגד אחד בכל תמונה.{RECOGNITION_URL ? '' : ' זיהוי אוטומטי לא מוגדר, מתייגים ידנית.'}
-            </Text>
+            <Text style={[text(12, '400', theme.muted), { marginTop: 8 }]}>התמונה נשמרת במכשיר בלבד. בגד אחד בכל תמונה, ובצילום מסך נזהה את הפריט הראשי שבחזית.</Text>
           </View>
 
-          {note !== '' && phase === 'none' && (
+          {isNew && status !== 'ready' && status !== 'checking' && (
+            <View style={{ backgroundColor: theme.warnSoft, borderRadius: 10, padding: 12, marginBottom: 8 }}>
+              <Text style={text(13, '600', theme.warn)}>{STATUS_TEXT[status]}</Text>
+            </View>
+          )}
+          {note !== '' && phase !== 'failed' && (
             <View style={{ backgroundColor: theme.accentSoft, borderRadius: 10, padding: 12, marginBottom: 8 }}><Text style={text(13, '500')}>{note}</Text></View>
           )}
           {it.source && (
@@ -164,11 +198,29 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
           )}
           {phase === 'done' && (
             <View style={[cardStyle, { padding: 14, marginBottom: 8 }]}>
-              <Text style={text(14, '700')}>הצעת תיוג: {it.subtype || categoryLabel[it.category]}{it.occasions.length ? ` · ${it.occasions.map((o) => occasionLabel[o]).join(', ')}` : ''}</Text>
+              <Text style={text(14, '700')}>הצעת תיוג: {it.category ? categoryLabel[it.category] : '—'}{it.subtype ? ` → ${it.subtype}` : ''}{it.color ? ` → ${COLORS[it.color]?.label}` : ''}</Text>
               <Text style={[text(12, '400', theme.muted), { marginTop: 4 }]}>
-                {uncertain.length ? 'שדות המסומנים "לבדיקה" לא היו ברורים. אפשר לתקן אותם או לשמור כמו שהם.' : 'אפשר לשמור כמו שהוא או לתקן שדות בודדים למטה.'}
+                {unrecognized.length ? `לא זוהו או לא ברורים: ${unrecognized.map((f) => FIELD_LABEL[f]).join(', ')}. הם מסומנים "לבדיקה" ואפשר למלא אותם ידנית.` : 'אפשר לאשר כמו שהוא או לתקן שדות בודדים למטה.'}
               </Text>
-              <View style={{ flexDirection: 'row', marginTop: 10 }}><Btn label="שמירה עם התגיות המוצעות" onPress={save} /></View>
+              {multiple && <Text style={[text(12, '500', theme.accent), { marginTop: 4 }]}>בתמונה יש כמה פריטים. הצענו את הפריט הראשי שבחזית.</Text>}
+              {guess && !it.brand && (
+                <View style={{ backgroundColor: theme.accentSoft, borderRadius: 10, padding: 10, marginTop: 10 }}>
+                  <Text style={text(13, '600')}>מותג ודגם אפשריים: {guess.brand}{guess.model ? ` ${guess.model}` : ''} ({guess.source === 'caption' ? 'לפי הכיתוב בתמונה' : guess.source === 'logo' ? 'לפי לוגו' : 'לפי העיצוב, פחות בטוח'})</Text>
+                  <View style={{ flexDirection: rowDir, gap: 10, marginTop: 8 }}>
+                    <Btn label="לא נכון" kind="ghost" onPress={() => setGuess(null)} />
+                    <Btn label="אישור" onPress={() => { set({ brand: guess.brand, model: guess.model }); setGuess(null); }} />
+                  </View>
+                </View>
+              )}
+              <View style={{ flexDirection: 'row', marginTop: 10 }}>
+                <Btn label="שמירה עם התגיות המוצעות" disabled={missing.category || missing.color} onPress={save} />
+              </View>
+            </View>
+          )}
+          {it.brand && (
+            <View style={{ flexDirection: rowDir, alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Text style={text(13, '600')}>מותג ודגם: {it.brand}{it.model ? ` ${it.model}` : ''}</Text>
+              <Pressable onPress={() => set({ brand: undefined, model: undefined })}><Text style={text(12, '600', theme.warn)}>הסרה</Text></Pressable>
             </View>
           )}
 
@@ -176,13 +228,18 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
           <TextInput value={it.name} onChangeText={(v) => set({ name: v })} placeholder="לדוגמה: חולצת פשתן לבנה" placeholderTextColor={theme.muted}
             style={[text(16), { backgroundColor: '#fff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: theme.line }]} />
 
-          <Label flag={flag('category')}>קטגוריה</Label>
+          <Label flag={flag('category')} required={showErrors && missing.category}>קטגוריה</Label>
           <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 8 }}>
-            {CATS.map((c) => <Chip key={c} label={categoryLabel[c]} on={it.category === c} flag={flag('category')} onPress={() => setCategory(c)} />)}
+            {CATS.map((c) => <Chip key={c} label={categoryLabel[c]} on={it.category === c} flag={flag('category') || (showErrors && missing.category)} onPress={() => setCategory(c)} />)}
           </View>
 
-          <Label flag={flag('subtype')}>סוג הבגד (לדוגמה: טייץ ספורט, ז׳קט)</Label>
-          <TextInput value={it.subtype ?? ''} onChangeText={(v) => { set({ subtype: v }); unflag('subtype'); }} placeholder="סוג" placeholderTextColor={theme.muted}
+          <Label flag={flag('subtype')}>סוג הבגד</Label>
+          {it.category && (
+            <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+              {SUBTYPES[it.category].map((s) => <Chip key={s} label={s} on={it.subtype === s} flag={flag('subtype')} onPress={() => { set({ subtype: s, part: partForCategory(it.category!, s) }); unflag('subtype'); }} />)}
+            </View>
+          )}
+          <TextInput value={it.subtype ?? ''} onChangeText={(v) => { set({ subtype: v }); unflag('subtype'); }} placeholder="סוג (אפשר להקליד חופשי)" placeholderTextColor={theme.muted}
             style={[text(16), { backgroundColor: '#fff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: flag('subtype') ? theme.warn : theme.line }]} />
 
           {it.category === 'activewear' && (
@@ -194,9 +251,9 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
             </>
           )}
 
-          <Label flag={flag('color')}>צבע עיקרי</Label>
+          <Label flag={flag('color')} required={showErrors && missing.color}>צבע עיקרי</Label>
           <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 8 }}>
-            {Object.entries(COLORS).map(([k, c]) => <Chip key={k} label={c.label} swatch={c.hex} on={it.color === k} flag={flag('color')} onPress={() => { set({ color: k }); unflag('color'); }} />)}
+            {Object.entries(COLORS).map(([k, c]) => <Chip key={k} label={c.label} swatch={c.hex} on={it.color === k} flag={flag('color') || (showErrors && missing.color)} onPress={() => { set({ color: k }); unflag('color'); }} />)}
           </View>
 
           <Label flag={flag('dressiness')}>רמת רשמיות</Label>
@@ -208,6 +265,7 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
           <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 8 }}>
             {OCCS.map((o) => <Chip key={o} label={occasionLabel[o]} on={it.occasions.includes(o)} flag={flag('occasions')} onPress={() => toggleOcc(o)} />)}
           </View>
+          {(!it.occasions.length || !it.dressiness) && <Text style={[text(12, '400', theme.muted), { marginTop: 6 }]}>שדות שלא נבחרו יוגדרו אוטומטית לפי הקטגוריה בעת השמירה, ואפשר לשנות אותם בהמשך.</Text>}
 
           <Label flag={flag('weather')}>מזג אוויר מתאים</Label>
           <View style={{ flexDirection: rowDir, gap: 8 }}>
@@ -224,7 +282,10 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
             <Switch value={!!it.favorite} onValueChange={(v) => set({ favorite: v })} trackColor={{ true: theme.accent }} />
           </View>
 
-          <View style={{ flexDirection: rowDir, gap: 10, marginTop: 24 }}>
+          {showErrors && (missing.category || missing.color) && (
+            <Text style={[text(13, '600', theme.warn), { marginTop: 16 }]}>כדי לשמור צריך לבחור {[missing.category && 'קטגוריה', missing.color && 'צבע'].filter(Boolean).join(' ו')}.</Text>
+          )}
+          <View style={{ flexDirection: rowDir, gap: 10, marginTop: 16 }}>
             <Btn label="ביטול" kind="ghost" onPress={onClose} />
             <Btn label="שמירה" onPress={save} />
           </View>

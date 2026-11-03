@@ -40,8 +40,13 @@ export interface PreparedPhoto {
  * Store a picked photo on the device only. Resized to keep storage small.
  * Native: copied into the app's document directory. Web: kept as a data URI.
  */
-export async function persistPhoto(uri: string): Promise<PreparedPhoto> {
-  const r = await manipulateAsync(uri, [{ resize: { width: 800 } }], { compress: 0.7, format: SaveFormat.JPEG, base64: true });
+export async function persistPhoto(uri: string, dims?: { width: number; height: number }): Promise<PreparedPhoto> {
+  // keep the longer edge <= 1400px (tall screenshots keep enough detail for recognition); never upscale
+  const LONG = 1400;
+  const actions = dims
+    ? Math.max(dims.width, dims.height) > LONG ? [{ resize: dims.height > dims.width ? { height: LONG } : { width: LONG } }] : []
+    : [{ resize: { width: 1000 } }];
+  const r = await manipulateAsync(uri, actions, { compress: 0.7, format: SaveFormat.JPEG, base64: true });
   const base64 = r.base64 ?? '';
   if (Platform.OS === 'web') return { uri: `data:image/jpeg;base64,${base64}`, base64, mediaType: 'image/jpeg' };
   const dest = new File(Paths.document, `closet-${Date.now()}-${Math.floor(Math.random() * 1e6)}.jpg`);

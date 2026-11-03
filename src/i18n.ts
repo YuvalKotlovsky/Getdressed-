@@ -45,3 +45,13 @@ export const dressinessLabel: Record<Dressiness, string> = {
   3: 'אלגנטי',
 };
 export const dayNames = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
+/** Quick subtype choices per category (free text is still allowed). */
+export const SUBTYPES: Record<Category, string[]> = {
+  top: ['חולצה', 'חולצה מכופתרת', 'טי שירט', 'סוודר', 'סווטשירט', 'גופייה'],
+  bottom: ['ג׳ינס', 'מכנסי בד', 'חצאית', 'שורט'],
+  dress: ['שמלה', 'שמלת מידי', 'שמלת מקסי', 'שמלה קצרה'],
+  shoes: ['סניקרס', 'נעלי עור', 'נעלי עקב', 'בלרינות', 'מגפונים', 'מגפיים', 'סנדלים', 'כפכף', 'כפכף סגור / קלוג'],
+  activewear: ['טייץ ספורט', 'גופיית ספורט', 'חולצת ספורט', 'מכנסי ספורט'],
+  outerwear: ['ז׳קט', 'מעיל', 'בלייזר', 'קרדיגן', 'ג׳קט ספורט'],
+};
