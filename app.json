@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "Wear My Week",
+    "slug": "wear-my-week",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#FAF6EF",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "app.wearmyweek.dev"
+    },
+    "android": {
+      "package": "app.wearmyweek.dev",
+      "supportsRtl": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#FAF6EF",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "הגישה לגלריה משמשת להוספת בגדים לארון שלכם. התמונות נשארות במכשיר.",
+          "cameraPermission": "המצלמה משמשת לצילום בגדים להוספה לארון."
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "הגישה ליומן משמשת לקרוא אירועים כדי להתאים לכם לוק לכל אירוע. האירועים נקראים ונשארים במכשיר."
+        }
+      ]
+    ]
+  }
+}
