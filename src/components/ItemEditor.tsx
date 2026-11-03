@@ -27,7 +27,9 @@ const Label = ({ children, flag }: { children: string; flag?: boolean }) => (
   </View>
 );
 
-export function ItemEditor({ item, visible, onClose }: { item: Item | null; visible: boolean; onClose: () => void }) {
+export interface EditorInitial { item: Partial<Item>; photo?: PreparedPhoto; uncertain?: TagField[]; note?: string }
+
+export function ItemEditor({ item, visible, onClose, initial }: { item: Item | null; visible: boolean; onClose: () => void; initial?: EditorInitial | null }) {
   const { saveItem, deleteItem } = useApp();
   const [it, setIt] = useState<Item>(blank());
   const [photo, setPhoto] = useState<PreparedPhoto | null>(null);
@@ -37,8 +39,15 @@ export function ItemEditor({ item, visible, onClose }: { item: Item | null; visi
   const isNew = !item;
 
   useEffect(() => {
-    if (visible) { setIt(item ? { ...item } : blank()); setPhoto(null); setPhase('none'); setUncertain([]); setNote(''); }
-  }, [visible, item]);
+    if (!visible) return;
+    if (item) setIt({ ...item });
+    else if (initial) setIt({ ...blank(), ...initial.item, photoUri: initial.photo?.uri ?? initial.item.photoUri });
+    else setIt(blank());
+    setPhoto(initial?.photo ?? null);
+    setPhase('none');
+    setUncertain(initial?.uncertain ?? []);
+    setNote(initial?.note ?? '');
+  }, [visible, item, initial]);
   const set = (p: Partial<Item>) => setIt((x) => ({ ...x, ...p }));
   const flag = (f: TagField) => uncertain.includes(f);
   const unflag = (f: TagField) => setUncertain((u) => u.filter((x) => x !== f));
@@ -126,6 +135,14 @@ export function ItemEditor({ item, visible, onClose }: { item: Item | null; visi
             </Text>
           </View>
 
+          {note !== '' && phase === 'none' && (
+            <View style={{ backgroundColor: theme.accentSoft, borderRadius: 10, padding: 12, marginBottom: 8 }}><Text style={text(13, '500')}>{note}</Text></View>
+          )}
+          {it.source && (
+            <Text style={[text(12, '400', theme.muted), { marginBottom: 8 }]} numberOfLines={2}>
+              מקור: {it.source.store || 'קישור'}{it.source.reference ? ` · מק״ט ${it.source.reference}` : ''}{it.source.url ? ` · ${it.source.url}` : ''}
+            </Text>
+          )}
           {phase === 'consent' && (
             <View style={[cardStyle, { padding: 14, marginBottom: 8 }]}>
               <Text style={text(15, '700')}>ניתוח אוטומטי של התמונה</Text>

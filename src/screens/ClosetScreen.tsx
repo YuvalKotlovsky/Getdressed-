@@ -5,7 +5,10 @@ import { categoryLabel } from '../i18n';
 import { rowDir, text } from '../ui';
 import { useApp } from '../state/AppContext';
 import { ItemTile } from '../components/ItemTile';
-import { ItemEditor } from '../components/ItemEditor';
+import { ItemEditor, type EditorInitial } from '../components/ItemEditor';
+import { AddItemSheet, type AddKind } from '../components/AddItemSheet';
+import { LinkImport } from '../components/LinkImport';
+import { ReceiptImport } from '../components/ReceiptImport';
 import { ModeBar } from '../components/ModeBar';
 import { Chip } from '../components/Chip';
 import { Btn } from '../components/Btn';
@@ -16,6 +19,10 @@ export function ClosetScreen() {
   const [filter, setFilter] = useState<Category | 'all'>('all');
   const [editing, setEditing] = useState<Item | null>(null);
   const [open, setOpen] = useState(false);
+  const [sheet, setSheet] = useState(false);
+  const [flow, setFlow] = useState<AddKind | null>(null);
+  const [initial, setInitial] = useState<EditorInitial | null>(null);
+  const pick = (k: AddKind) => { setSheet(false); if (k === 'photo') { setEditing(null); setInitial(null); setOpen(true); } else setFlow(k); };
   const { width } = useWindowDimensions();
   const cols = 2;
   const size = Math.floor((Math.min(width, 560) - 40 - 16) / cols);
@@ -30,7 +37,7 @@ export function ClosetScreen() {
         {(Object.keys(categoryLabel) as Category[]).map((c) => <Chip key={c} label={categoryLabel[c]} on={filter === c} onPress={() => setFilter(c)} />)}
       </View>
       <View style={{ flexDirection: 'row', marginBottom: 16 }}>
-        <Btn label="הוספת פריט" onPress={() => { setEditing(null); setOpen(true); }} />
+        <Btn label="הוספת פריט" onPress={() => setSheet(true)} />
       </View>
 
       {items.length === 0 && (
@@ -41,7 +48,7 @@ export function ClosetScreen() {
       <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 16 }}>
         {items.map((it) => (
           <View key={it.id}>
-            <Pressable onPress={() => { setEditing(it); setOpen(true); }}>
+            <Pressable onPress={() => { setEditing(it); setInitial(null); setOpen(true); }}>
               <ItemTile item={it} size={size} />
             </Pressable>
             <Pressable onPress={() => saveItem({ ...it, available: !it.available })} style={{ marginTop: 4 }}>
@@ -56,7 +63,10 @@ export function ClosetScreen() {
           <Text style={text(14, '600', theme.muted)}>איפוס ארון ההדגמה</Text>
         </Pressable>
       )}
-      <ItemEditor item={editing} visible={open} onClose={() => setOpen(false)} />
+      <ItemEditor item={editing} initial={initial} visible={open} onClose={() => { setOpen(false); setInitial(null); }} />
+      <AddItemSheet visible={sheet} onClose={() => setSheet(false)} onPick={pick} />
+      <LinkImport visible={flow === 'link'} onClose={() => setFlow(null)} onDone={(i) => { setFlow(null); setEditing(null); setInitial(i); setOpen(true); }} />
+      <ReceiptImport visible={flow === 'receipt'} onClose={() => setFlow(null)} />
     </ScrollView>
   );
 }

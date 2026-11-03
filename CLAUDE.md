@@ -21,6 +21,14 @@ Note: `npx expo install` needs api.expo.dev; in the cloud sandbox it is blocked,
 - Prompt + output validation live in `src/tagging/schema.ts` (shared by server, client and tests). Fields below confidence 0.6 are flagged "לבדיקה".
 - Weather: `src/weather/weather.ts` uses Open-Meteo hourly forecast (no key) for the chosen city, else a per-city seasonal estimate, plus a per-day manual override. Weather only ranks outfits after occasion/dressiness filtering; cold evenings add a layer (outerwear), flagged missing if the closet has none.
 
+## Adding items: photo, product link, receipt
+- `src/components/AddItemSheet.tsx` offers צילום או גלריה / הדבקת קישור למוצר / סריקת קבלה; all three end in the same editable tag editor (`ItemEditor`).
+- Link: `server` POST `/product` fetches a public HTTPS page (`server/safeFetch.ts`: https only, no credentials, port 443, DNS result must be public, every redirect re-validated, size/time limits) and `src/import/parseProduct.ts` reads JSON-LD Product / Open Graph (name, image, color, reference). Blocked/removed/empty pages keep the link and continue with a screenshot or manual entry.
+- Receipt: `src/import/receipt.ts` parses item lines (Zara style `NNNN/NNN/NNN` references), tries `https://www.zara.com/il/he/-pNNNNNNNN.html`, and labels each line matched / uncertain / unmatched. Text can be pasted on-device (iPhone Live Text copy); photos go to `/receipt` only after a crop+consent step. Only the confirmed items (with store/url/reference) are saved; a receipt fingerprint (hash) warns about re-scans.
+- The receipt format and Zara page structure are ASSUMED from fixtures; a real cropped Zara receipt and real pages are still needed to verify them.
+- Native calendar: `src/calendar/native.ts` (expo-calendar legacy API, lazy-required) + `CalendarSheet` (permission, choose calendars). Events are mapped by `mapEvents.ts`, merged with manual events (`CompositeCalendarProvider`) and classified on-device. Phone-only; Safari uses manual events.
+- Real-service check (not possible from the cloud sandbox): `ANTHROPIC_API_KEY=... npm run verify:services -- --product <url> photo.jpg`.
+
 ## Architecture
 - `src/logic/` pure TS: `classify.ts` (HE/EN title -> occasion), `recommend.ts` (eligibility by occasion/dressiness/availability, rank by weather fit + color compatibility + favorites - recency, layers for cold/cool evenings, missing-piece reporting, saved outfits flagged stale), `week.ts` (provider -> 7 DayPlans).
 - `src/calendar/provider.ts`: `CalendarProvider` seam. Today: `DemoCalendarProvider` (sample week, relative to today) and `ManualCalendarProvider` (events typed in for "my closet").
@@ -30,7 +38,7 @@ Note: `npx expo install` needs api.expo.dev; in the cloud sandbox it is blocked,
 ## Privacy rules
 Never commit real photos, calendar exports, `.env*`, keys or certificates (see `.gitignore`). Photos stay on device. If image recognition uses an external service: ask before sending a photo, keep credentials on a server, never in the app.
 
-## Next milestone: native calendar access (+ deploying/verifying recognition)
-1. `NativeCalendarProvider` with `expo-calendar`: request access on the "חיבור ליומן" tap, let the user pick calendars, read events locally, keep per-event occasion/dressiness corrections (already stored in `occasionOverrides`). Declining keeps the manual flow.
+## Next milestone: device + real-service verification
+1. Verify native calendar on a real iPhone/Android (permission prompt, calendar list, refresh after moving an event).
 2. Deploy `server/` somewhere reachable, set `RECOGNITION_URL`, and evaluate real-photo accuracy (leggings, dresses). Weather and recognition were only tested with mocked services in the sandbox.
 3. Device verification on real iPhone/Android (camera, permissions, RTL on a Hebrew-locale device, photo persistence).

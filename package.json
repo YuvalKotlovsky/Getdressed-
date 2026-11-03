@@ -33,7 +33,8 @@
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "export": "expo export --platform web",
-    "server": "tsx server/index.ts"
+    "server": "tsx server/index.ts",
+    "verify:services": "tsx scripts/verify-services.ts"
   },
   "private": true
 }

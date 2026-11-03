@@ -48,3 +48,15 @@ export async function persistPhoto(uri: string): Promise<PreparedPhoto> {
   new File(r.uri).copy(dest);
   return { uri: dest.uri, base64, mediaType: 'image/jpeg' };
 }
+
+/** Base64 image (e.g. a product photo returned by the server) -> stored on this device like any picked photo. */
+export async function photoFromBase64(base64: string, mediaType = 'image/jpeg'): Promise<PreparedPhoto> {
+  if (Platform.OS === 'web') return persistPhoto(`data:${mediaType};base64,${base64}`);
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const tmp = new File(Paths.cache, `import-${Date.now()}.jpg`);
+  tmp.create({ overwrite: true });
+  tmp.write(bytes);
+  return persistPhoto(tmp.uri);
+}
