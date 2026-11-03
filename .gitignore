@@ -1,0 +1,22 @@
+node_modules/
+.expo/
+dist/
+web-build/
+*.log
+.env
+.env.*
+!.env.example
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+# private data: never commit real photos, calendar exports, or keys
+/private/
+/my-photos/
+*.ics
+google-services.json
+GoogleService-Info.plist
+ios/
+android/
+.DS_Store
