@@ -19,10 +19,15 @@ const RULES: { occasion: Occasion; dressiness: 1 | 2 | 3; words: string[] }[] = 
     ],
   },
   {
-    occasion: 'evening',
+    occasion: 'formal',
     dressiness: 3,
+    words: ['חתונה', 'חינה', 'בר מצווה', 'בת מצווה', 'ברית', 'גאלה', 'אירוע חגיגי', 'wedding', 'gala', 'formal', 'ceremony', 'black tie'],
+  },
+  {
+    occasion: 'evening',
+    dressiness: 2,
     words: [
-      'ארוחת ערב', 'חתונה', 'מסיבה', 'דייט', 'יום הולדת', 'יומולדת', 'הצגה', 'קונצרט', 'בילוי', 'בר ', 'מסעדה',
+      'ארוחת ערב', 'מסיבה', 'דייט', 'יום הולדת', 'יומולדת', 'הצגה', 'קונצרט', 'בילוי', 'בר ', 'מסעדה',
       'dinner', 'wedding', 'party', 'date', 'birthday', 'concert', 'show', 'drinks', 'restaurant',
     ],
   },
@@ -43,4 +48,4 @@ export function classifyTitle(title: string): Classification {
   return { occasion: 'casual', dressiness: 1, confident: false };
 }
 
-export const defaultDressiness: Record<Occasion, 1 | 2 | 3> = { workout: 1, work: 2, evening: 3, casual: 1 };
+export const defaultDressiness: Record<Occasion, 1 | 2 | 3> = { workout: 1, work: 2, evening: 2, casual: 1, formal: 3 };

@@ -1,0 +1,12 @@
+# Optional: deploy the recognition proxy on Render (Blueprint). Set ANTHROPIC_API_KEY in the dashboard.
+services:
+  - type: web
+    name: wear-my-week-recognition
+    runtime: node
+    buildCommand: npm ci
+    startCommand: npm run server
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGIN
+        value: https://yuvalkotlovsky.github.io

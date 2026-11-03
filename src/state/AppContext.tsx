@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import type { AppData, CalEvent, Choice, DayPlan, Item, Mode, ModeData, Occasion } from '../types';
+import type { AppData, CalEvent, Choice, DayPlan, Item, Mode, ModeData, Occasion, Weather } from '../types';
+import { cityById, fetchForecast, makeWeatherSource, type City, type Forecast } from '../weather/weather';
 import { freshData, loadData, saveData } from '../storage/persist';
 import { DemoCalendarProvider, ManualCalendarProvider, type CalendarProvider } from '../calendar/provider';
 import { buildWeek } from '../logic/week';
@@ -15,6 +16,11 @@ interface Ctx {
   week: DayPlan[];
   refreshing: boolean;
   refresh(): Promise<void>;
+  city: City;
+  forecastStatus: 'loading' | 'live' | 'unavailable';
+  weatherOverride: Record<string, Weather>;
+  setCity(id: string): void;
+  setWeatherOverride(dKey: string, w: Weather | null): void;
   nextLook(dKey: string, entryKey: string): void;
   confirmLook(dKey: string, entryKey: string, itemIds: string[], worn: boolean): void;
   clearSaved(dKey: string, entryKey: string): void;
@@ -40,6 +46,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [week, setWeek] = useState<DayPlan[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [tick, setTick] = useState(0);
+  const [forecast, setForecast] = useState<Forecast | null>(null);
+  const [forecastStatus, setForecastStatus] = useState<'loading' | 'live' | 'unavailable'>('loading');
   const allRef = useRef(all);
   allRef.current = all;
 
@@ -54,13 +62,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [mode],
   );
 
+  const city = cityById(all.settings?.cityId);
+  const weatherOverride = all.settings?.weatherOverride ?? {};
+
+  // Forecast for the chosen city; refreshed on open/foreground/pull-to-refresh. Falls back to the local season.
+  useEffect(() => {
+    if (!ready) return;
+    let live = true;
+    setForecastStatus('loading');
+    fetchForecast(city).then((f) => { if (live) { setForecast(f); setForecastStatus(f ? 'live' : 'unavailable'); } });
+    return () => { live = false; };
+  }, [ready, city, tick]);
+
+  const weatherSource = useMemo(() => makeWeatherSource({ city, forecast, overrides: weatherOverride }), [city, forecast, weatherOverride]);
+
   // Re-plan whenever data changes or a refresh is requested (app open/foreground/pull-to-refresh).
   useEffect(() => {
     if (!ready) return;
     let live = true;
-    buildWeek(provider, data, new Date()).then((w) => { if (live) { setWeek(w); setRefreshing(false); } });
+    buildWeek(provider, data, new Date(), weatherSource).then((w) => { if (live) { setWeek(w); setRefreshing(false); } });
     return () => { live = false; };
-  }, [ready, provider, data, tick]);
+  }, [ready, provider, data, tick, weatherSource]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => { if (s === 'active') setTick((t) => t + 1); });
@@ -78,7 +100,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   });
 
   const value: Ctx = {
-    ready, mode, data, week, refreshing, refresh,
+    ready, mode, data, week, refreshing, refresh, city, forecastStatus, weatherOverride,
+    setCity: (id) => setAll((a) => ({ ...a, settings: { cityId: id, weatherOverride: a.settings?.weatherOverride ?? {} } })),
+    setWeatherOverride: (dk, w) => setAll((a) => {
+      const cur = { ...(a.settings?.weatherOverride ?? {}) };
+      if (w) cur[dk] = w; else delete cur[dk];
+      return { ...a, settings: { cityId: a.settings?.cityId ?? city.id, weatherOverride: cur } };
+    }),
     setMode: (m) => setAll((a) => ({ ...a, mode: m })),
     nextLook: (dk, ek) => patch((d) => setChoice(d, choiceKey(dk, ek), (c) => ({ variant: c.variant + 1 }))),
     confirmLook: (dk, ek, ids, worn) =>

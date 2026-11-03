@@ -1,7 +1,9 @@
-export type Category = 'top' | 'bottom' | 'dress' | 'shoes' | 'activewear';
+export type Category = 'top' | 'bottom' | 'dress' | 'shoes' | 'activewear' | 'outerwear';
 /** Which part of an outfit the item fills. Activewear can be a top or a bottom. */
-export type Part = 'top' | 'bottom' | 'full' | 'shoes';
-export type Occasion = 'work' | 'workout' | 'casual' | 'evening';
+export type Part = 'top' | 'bottom' | 'full' | 'shoes' | 'layer';
+export type Occasion = 'work' | 'workout' | 'casual' | 'evening' | 'formal';
+export type Weather = 'hot' | 'mild' | 'cold';
+export interface WeatherPoint { temp: number; band: Weather; source: 'forecast' | 'season' | 'manual' }
 export type Dressiness = 1 | 2 | 3; // 1 casual, 2 smart, 3 formal
 
 export interface Item {
@@ -10,8 +12,12 @@ export interface Item {
   category: Category;
   part: Part;
   color: string; // key of COLORS
+  /** Hebrew subtype, e.g. טייץ ספורט (from recognition or manual entry) */
+  subtype?: string;
   dressiness: Dressiness;
   occasions: Occasion[];
+  /** Weather bands the item suits; missing = category default */
+  weather?: Weather[];
   available: boolean;
   favorite?: boolean;
   /** Local photo (file:// on device, data: URI on web). Demo items have none. */
@@ -46,6 +52,12 @@ export interface Outfit {
   options: number;
   /** set when the user saved this outfit and one of its items is gone/unavailable */
   stale?: string[];
+  /** weather layer (jacket/coat) on top of the outfit */
+  layer?: Item;
+  layerNeed: 'none' | 'optional' | 'required';
+  /** a required layer is needed (cold) but the closet has none */
+  missingLayer?: boolean;
+  weather: WeatherPoint;
 }
 
 export interface PlanEntry {
@@ -57,6 +69,7 @@ export interface PlanEntry {
   outfit: Outfit;
   saved: boolean;
   worn: boolean;
+  weather: WeatherPoint;
 }
 
 export interface DayPlan {
@@ -87,9 +100,16 @@ export interface ModeData {
 
 export type Mode = 'demo' | 'mine';
 
+export interface Settings {
+  cityId: string;
+  /** manual weather override per date key */
+  weatherOverride: Record<string, Weather>;
+}
+
 export interface AppData {
   version: 1;
   mode: Mode;
+  settings?: Settings;
   demo: ModeData;
   mine: ModeData;
 }

@@ -1,31 +1,28 @@
 import type { Category, Dressiness, Item, Occasion, Part } from '../types';
+import { partForCategory, type TagSuggestion } from './schema';
 
-export interface TagSuggestion {
-  category?: Category;
-  part?: Part;
-  color?: string;
-  dressiness?: Dressiness;
-  occasions?: Occasion[];
-}
+export type { TagSuggestion } from './schema';
 
 /**
- * Photo tagging seam. Manual tagging is the baseline (no suggestions).
- * Next milestone: a RecognitionTagger that asks consent, sends the chosen photo to a
- * server-side endpoint (keys stay on the server) and returns suggestions for the user to confirm.
+ * Photo tagging seam. Manual tagging is always available (no suggestions).
+ * RecognitionTagger (./recognition.ts) is optional: it needs a configured server and the user's consent per photo.
  */
 export interface Tagger {
   readonly id: 'manual' | 'recognition';
-  suggest(photoUri: string): Promise<TagSuggestion>;
+  suggest(photo: { base64: string; mediaType: string }): Promise<TagSuggestion>;
 }
 
 export const manualTagger: Tagger = { id: 'manual', suggest: async () => ({}) };
 
 export const defaultsFor = (category: Category): Pick<Item, 'part' | 'dressiness' | 'occasions'> => {
-  switch (category) {
-    case 'top': return { part: 'top', dressiness: 2, occasions: ['casual', 'work'] };
-    case 'bottom': return { part: 'bottom', dressiness: 2, occasions: ['casual', 'work'] };
-    case 'dress': return { part: 'full', dressiness: 2, occasions: ['casual', 'evening'] };
-    case 'shoes': return { part: 'shoes', dressiness: 2, occasions: ['casual', 'work'] };
-    case 'activewear': return { part: 'top', dressiness: 1, occasions: ['workout'] };
-  }
+  const part: Part = partForCategory(category);
+  const base: Record<Category, { dressiness: Dressiness; occasions: Occasion[] }> = {
+    top: { dressiness: 2, occasions: ['casual', 'work'] },
+    bottom: { dressiness: 2, occasions: ['casual', 'work'] },
+    dress: { dressiness: 2, occasions: ['casual', 'evening'] },
+    shoes: { dressiness: 2, occasions: ['casual', 'work'] },
+    activewear: { dressiness: 1, occasions: ['workout'] },
+    outerwear: { dressiness: 2, occasions: ['casual', 'work'] },
+  };
+  return { part, ...base[category] };
 };

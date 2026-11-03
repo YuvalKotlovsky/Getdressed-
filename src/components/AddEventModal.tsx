@@ -4,7 +4,7 @@ import { theme } from '../theme';
 import { occasionLabel } from '../i18n';
 import { rowDir, text } from '../ui';
 import { Chip } from './Chip';
-import { Btn } from './OutfitCard';
+import { Btn } from './Btn';
 import { useApp } from '../state/AppContext';
 import type { Occasion } from '../types';
 
@@ -27,11 +27,11 @@ export function AddEventModal({ date, visible, onClose }: { date: Date; visible:
       <View style={{ backgroundColor: theme.bg, padding: 20, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}>
         <Text style={text(20, '700')}>הוספת אירוע</Text>
         <TextInput value={title} onChangeText={setTitle} placeholder="שם האירוע" placeholderTextColor={theme.muted}
-          style={[text(16), { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginTop: 12 }]} />
+          style={[text(16), { backgroundColor: '#fff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: theme.line, marginTop: 12 }]} />
         <TextInput value={time} onChangeText={setTime} placeholder="HH:MM" placeholderTextColor={theme.muted}
-          style={[text(16), { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginTop: 10 }]} />
+          style={[text(16), { backgroundColor: '#fff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: theme.line, marginTop: 10 }]} />
         <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-          {(['work', 'workout', 'casual', 'evening'] as Occasion[]).map((o) => <Chip key={o} label={occasionLabel[o]} on={occ === o} onPress={() => setOcc(o)} />)}
+          {(['work', 'workout', 'casual', 'evening', 'formal'] as Occasion[]).map((o) => <Chip key={o} label={occasionLabel[o]} on={occ === o} onPress={() => setOcc(o)} />)}
         </View>
         <View style={{ flexDirection: rowDir, gap: 10, marginTop: 18 }}>
           <Btn label="ביטול" kind="ghost" onPress={onClose} />

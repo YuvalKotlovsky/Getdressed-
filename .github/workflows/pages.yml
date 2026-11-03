@@ -19,7 +19,11 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npx expo export --platform web
-        env: { CI: '1', EXPO_BASE_URL: '/${{ github.event.repository.name }}' }
+        env:
+          CI: '1'
+          EXPO_BASE_URL: '/${{ github.event.repository.name }}'
+          # optional: public URL of the recognition server (repo Settings > Variables > Actions > RECOGNITION_URL)
+          EXPO_PUBLIC_RECOGNITION_URL: ${{ vars.RECOGNITION_URL }}
       - uses: actions/upload-pages-artifact@v3
         with: { path: dist }
       - id: d

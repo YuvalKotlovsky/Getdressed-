@@ -8,7 +8,7 @@ import { ItemTile } from '../components/ItemTile';
 import { ItemEditor } from '../components/ItemEditor';
 import { ModeBar } from '../components/ModeBar';
 import { Chip } from '../components/Chip';
-import { Btn } from '../components/OutfitCard';
+import { Btn } from '../components/Btn';
 import type { Category, Item } from '../types';
 
 export function ClosetScreen() {
@@ -18,19 +18,19 @@ export function ClosetScreen() {
   const [open, setOpen] = useState(false);
   const { width } = useWindowDimensions();
   const cols = 2;
-  const size = Math.min(width, 520) / cols - 30;
+  const size = Math.floor((Math.min(width, 560) - 40 - 16) / cols);
   const items = data.items.filter((i) => filter === 'all' || i.category === filter);
 
   return (
     <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-      <Text style={[text(34, '800'), { marginBottom: 14 }]}>הארון שלי</Text>
+      <Text style={[text(28, '700'), { marginBottom: 14 }]}>הארון שלי</Text>
       <ModeBar />
       <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
         <Chip label="הכל" on={filter === 'all'} onPress={() => setFilter('all')} />
         {(Object.keys(categoryLabel) as Category[]).map((c) => <Chip key={c} label={categoryLabel[c]} on={filter === c} onPress={() => setFilter(c)} />)}
       </View>
       <View style={{ flexDirection: 'row', marginBottom: 16 }}>
-        <Btn label="＋ הוספת פריט" onPress={() => { setEditing(null); setOpen(true); }} />
+        <Btn label="הוספת פריט" onPress={() => { setEditing(null); setOpen(true); }} />
       </View>
 
       {items.length === 0 && (
@@ -38,14 +38,14 @@ export function ClosetScreen() {
           {mode === 'mine' ? 'הארון ריק. הוסיפו פריט ראשון מהגלריה.' : 'אין פריטים בקטגוריה הזו.'}
         </Text>
       )}
-      <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 20, justifyContent: 'center' }}>
+      <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 16 }}>
         {items.map((it) => (
           <View key={it.id}>
             <Pressable onPress={() => { setEditing(it); setOpen(true); }}>
               <ItemTile item={it} size={size} />
             </Pressable>
             <Pressable onPress={() => saveItem({ ...it, available: !it.available })} style={{ marginTop: 4 }}>
-              <Text style={text(13, '600', it.available ? theme.accent : theme.ok)}>{it.available ? 'סימון כלא זמין' : 'החזרה לזמין'}</Text>
+              <Text style={text(12, '600', it.available ? theme.muted : theme.ok)}>{it.available ? 'סימון כלא זמין' : 'החזרה לזמין'}</Text>
             </Pressable>
           </View>
         ))}

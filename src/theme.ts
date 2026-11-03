@@ -1,15 +1,17 @@
 export const theme = {
-  bg: '#FAF6EF', // warm off-white
+  bg: '#F6F2EB', // warm off-white
   card: '#FFFFFF',
-  ink: '#2B2622',
-  muted: '#8A8178',
-  line: '#EAE2D6',
-  accent: '#B5651D',
-  accentSoft: '#F3E3D0',
-  warn: '#B3402A',
-  warnSoft: '#FBE9E4',
-  ok: '#3E7D5A',
-  radius: 20,
+  ink: '#2D2B28', // charcoal
+  muted: '#8C857B',
+  line: '#E6E0D6',
+  lineStrong: '#D3CABC',
+  accent: '#7D6E5D', // muted taupe
+  accentSoft: '#EFEAE1',
+  warn: '#8A5A4C',
+  warnSoft: '#F5ECE8',
+  ok: '#5F7260',
+  radius: 16,
+  gap: 12,
 };
 
 export const COLORS: Record<string, { label: string; hex: string; neutral: boolean }> = {
