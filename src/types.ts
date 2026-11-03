@@ -19,6 +19,8 @@ export interface Item {
   /** Weather bands the item suits; missing = category default */
   weather?: Weather[];
   available: boolean;
+  /** where the item came from (product link / receipt); never contains the receipt itself */
+  source?: { store?: string; url?: string; reference?: string };
   favorite?: boolean;
   /** Local photo (file:// on device, data: URI on web). Demo items have none. */
   photoUri?: string;
@@ -104,6 +106,11 @@ export interface Settings {
   cityId: string;
   /** manual weather override per date key */
   weatherOverride: Record<string, Weather>;
+  /** native calendar (phone only): user chose to connect, and which calendars to read */
+  calendarConnected?: boolean;
+  calendarIds?: string[];
+  /** fingerprints of receipts already imported (hashes only, never the receipt) */
+  receiptFingerprints?: string[];
 }
 
 export interface AppData {

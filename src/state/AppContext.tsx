@@ -1,9 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import type { AppData, CalEvent, Choice, DayPlan, Item, Mode, ModeData, Occasion, Weather } from '../types';
+import type { Settings, AppData, CalEvent, Choice, DayPlan, Item, Mode, ModeData, Occasion, Weather } from '../types';
 import { cityById, fetchForecast, makeWeatherSource, type City, type Forecast } from '../weather/weather';
 import { freshData, loadData, saveData } from '../storage/persist';
-import { DemoCalendarProvider, ManualCalendarProvider, type CalendarProvider } from '../calendar/provider';
+import { CompositeCalendarProvider, DemoCalendarProvider, ManualCalendarProvider, type CalendarProvider } from '../calendar/provider';
+import { NativeCalendarProvider, nativeCalendarSupported } from '../calendar/native';
 import { buildWeek } from '../logic/week';
 import { choiceKey } from '../logic/recommend';
 import { demoModeData } from '../data/demo';
@@ -21,6 +22,8 @@ interface Ctx {
   weatherOverride: Record<string, Weather>;
   setCity(id: string): void;
   setWeatherOverride(dKey: string, w: Weather | null): void;
+  settings: Settings;
+  updateSettings(patch: Partial<Settings>): void;
   nextLook(dKey: string, entryKey: string): void;
   confirmLook(dKey: string, entryKey: string, itemIds: string[], worn: boolean): void;
   clearSaved(dKey: string, entryKey: string): void;
@@ -57,9 +60,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const mode = all.mode;
   const data = all[mode];
 
+  const calendarConnected = !!all.settings?.calendarConnected;
+  const calendarKey = (all.settings?.calendarIds ?? []).join(',');
   const provider: CalendarProvider = useMemo(
-    () => (mode === 'demo' ? new DemoCalendarProvider() : new ManualCalendarProvider(() => allRef.current.mine.manualEvents)),
-    [mode],
+    () => {
+      if (mode === 'demo') return new DemoCalendarProvider();
+      const parts: CalendarProvider[] = [new ManualCalendarProvider(() => allRef.current.mine.manualEvents)];
+      if (nativeCalendarSupported && calendarConnected) parts.push(new NativeCalendarProvider(() => allRef.current.settings?.calendarIds ?? []));
+      return new CompositeCalendarProvider(parts);
+    },
+    [mode, calendarConnected, calendarKey],
   );
 
   const city = cityById(all.settings?.cityId);
@@ -101,11 +111,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const value: Ctx = {
     ready, mode, data, week, refreshing, refresh, city, forecastStatus, weatherOverride,
-    setCity: (id) => setAll((a) => ({ ...a, settings: { cityId: id, weatherOverride: a.settings?.weatherOverride ?? {} } })),
+    settings: all.settings ?? { cityId: city.id, weatherOverride: {} },
+    updateSettings: (patch) => setAll((a) => ({ ...a, settings: { cityId: a.settings?.cityId ?? city.id, weatherOverride: a.settings?.weatherOverride ?? {}, ...a.settings, ...patch } })),
+    setCity: (id) => setAll((a) => ({ ...a, settings: { weatherOverride: {}, ...a.settings, cityId: id } })),
     setWeatherOverride: (dk, w) => setAll((a) => {
       const cur = { ...(a.settings?.weatherOverride ?? {}) };
       if (w) cur[dk] = w; else delete cur[dk];
-      return { ...a, settings: { cityId: a.settings?.cityId ?? city.id, weatherOverride: cur } };
+      return { ...a, settings: { ...a.settings, cityId: a.settings?.cityId ?? city.id, weatherOverride: cur } };
     }),
     setMode: (m) => setAll((a) => ({ ...a, mode: m })),
     nextLook: (dk, ek) => patch((d) => setChoice(d, choiceKey(dk, ek), (c) => ({ variant: c.variant + 1 }))),

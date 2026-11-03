@@ -1,11 +1,14 @@
 import React from 'react';
-import { Alert, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
+import { useState } from 'react';
+import { CalendarSheet } from './CalendarSheet';
 import { theme } from '../theme';
 import { rowDir, text } from '../ui';
 import { useApp } from '../state/AppContext';
 
 export function ModeBar() {
-  const { mode, setMode } = useApp();
+  const { mode, setMode, settings } = useApp();
+  const [cal, setCal] = useState(false);
   const demo = mode === 'demo';
   return (
     <View style={{ marginBottom: 16 }}>
@@ -21,13 +24,14 @@ export function ModeBar() {
         })}
       </View>
       <Text style={[text(12, '400', theme.muted), { marginTop: 6 }]}>
-        {demo ? 'מצב הדגמה: ארון ויומן לדוגמה, לא הנתונים שלכם.' : 'הארון שלכם, שמור במכשיר בלבד. אירועים מתווספים ידנית עד חיבור היומן.'}
+        {demo ? 'מצב הדגמה: ארון ויומן לדוגמה, לא הנתונים שלכם.' : 'הארון שלכם, שמור במכשיר בלבד. אפשר להוסיף אירועים ידנית או לחבר את יומן הטלפון.'}
       </Text>
       {!demo && (
-        <Pressable onPress={() => Alert.alert('חיבור ליומן', 'קריאת יומן הטלפון תתווסף בשלב הבא. בינתיים אפשר להוסיף אירועים ידנית.')} style={{ marginTop: 6 }}>
-          <Text style={text(14, '600', theme.accent)}>חיבור ליומן</Text>
+        <Pressable onPress={() => setCal(true)} style={{ marginTop: 6 }}>
+          <Text style={text(14, '600', theme.accent)}>{settings.calendarConnected ? 'יומן מחובר · שינוי' : 'חיבור ליומן'}</Text>
         </Pressable>
       )}
+      <CalendarSheet visible={cal} onClose={() => setCal(false)} />
     </View>
   );
 }

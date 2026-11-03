@@ -44,3 +44,16 @@ export const weekRange = (now = new Date()): [Date, Date] => {
   const s = startOfDay(now);
   return [s, addDays(s, 7)];
 };
+
+/** Merges several providers; one failing (permission revoked, calendar removed) never hides the others. */
+export class CompositeCalendarProvider implements CalendarProvider {
+  readonly id = 'manual' as const;
+  readonly isDemo = false;
+  constructor(private parts: CalendarProvider[]) {}
+  async requestAccess() { return true; }
+  async listCalendars() { return (await Promise.all(this.parts.map((p) => p.listCalendars().catch(() => [])))).flat(); }
+  async getEvents(from: Date, to: Date, ids?: string[]) {
+    const all = await Promise.all(this.parts.map((p) => p.getEvents(from, to, ids).catch(() => [] as CalEvent[])));
+    return all.flat();
+  }
+}

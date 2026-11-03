@@ -18,7 +18,7 @@ export async function loadData(): Promise<AppData> {
     const s = await AsyncStorage.getItem(KEY);
     if (s) {
       const d = JSON.parse(s) as AppData;
-      if (d?.version === 1) return { ...d, settings: { cityId: d.settings?.cityId ?? DEFAULT_CITY, weatherOverride: d.settings?.weatherOverride ?? {} } };
+      if (d?.version === 1) return { ...d, settings: { ...d.settings, cityId: d.settings?.cityId ?? DEFAULT_CITY, weatherOverride: d.settings?.weatherOverride ?? {} } };
     }
   } catch {}
   return freshData();
