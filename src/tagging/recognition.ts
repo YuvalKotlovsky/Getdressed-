@@ -36,3 +36,21 @@ export function createRecognitionTagger(baseUrl: string | undefined = RECOGNITIO
     },
   };
 }
+
+export type RecognitionStatus = 'unconfigured' | 'checking' | 'ready' | 'nokey' | 'down';
+
+/** Cheap health ping so the editor can say WHY recognition is unavailable (deployed build without URL, server down, no key). */
+export async function checkRecognitionServer(baseUrl: string | undefined = RECOGNITION_URL, fetchImpl: typeof fetch = fetch): Promise<RecognitionStatus> {
+  if (!baseUrl) return 'unconfigured';
+  try {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), 8000) : null;
+    const res = await fetchImpl(`${baseUrl.replace(/\/$/, '')}/health`, { signal: ctl?.signal });
+    if (timer) clearTimeout(timer);
+    if (!res.ok) return 'down';
+    const j: any = await res.json().catch(() => null);
+    return j?.ok ? (j.recognition === false ? 'nokey' : 'ready') : 'down';
+  } catch {
+    return 'down';
+  }
+}

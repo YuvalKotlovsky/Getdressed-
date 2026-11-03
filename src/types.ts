@@ -14,6 +14,9 @@ export interface Item {
   color: string; // key of COLORS
   /** Hebrew subtype, e.g. טייץ ספורט (from recognition or manual entry) */
   subtype?: string;
+  /** user-confirmed brand/model (suggested by recognition, never assumed) */
+  brand?: string;
+  model?: string;
   dressiness: Dressiness;
   occasions: Occasion[];
   /** Weather bands the item suits; missing = category default */

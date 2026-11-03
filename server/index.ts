@@ -75,7 +75,7 @@ export function createServer(env: AnalyzeEnv & { allowedOrigin?: string; token?:
       res.end(JSON.stringify(json));
     };
     if (req.method === 'OPTIONS') return send(204, {});
-    if (req.method === 'GET' && req.url === '/health') return send(200, { ok: true });
+    if (req.method === 'GET' && req.url === '/health') return send(200, { ok: true, recognition: !!env.apiKey });
     const route = req.url === '/analyze' ? analyze : req.url === '/receipt' ? analyzeReceipt : req.url === '/product' ? product : null;
     if (req.method !== 'POST' || !route) return send(404, { error: 'not_found' });
     if (env.token && req.headers.authorization !== `Bearer ${env.token}`) return send(401, { error: 'unauthorized' });
