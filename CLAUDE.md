@@ -6,7 +6,8 @@
 
 ## Run
 ```
-npm install
+nvm use   # Node 22 (see .nvmrc; engines >=22 <23, same as CI)
+npm ci
 npm run typecheck      # tsc
 npm test               # planner/classifier tests (node:test via tsx)
 npx expo start         # scan the QR with Expo Go (phone + computer on same network); add --tunnel if needed
@@ -37,9 +38,9 @@ Note: `npx expo install` needs api.expo.dev; in the cloud sandbox it is blocked,
 
 ## Architecture
 - `src/logic/` pure TS: `classify.ts` (HE/EN title -> occasion), `recommend.ts` (eligibility by occasion/dressiness/availability, rank by weather fit + color compatibility + favorites - recency, layers for cold/cool evenings, missing-piece reporting, saved outfits flagged stale), `week.ts` (provider -> 7 DayPlans).
-- `src/calendar/provider.ts`: `CalendarProvider` seam. Today: `DemoCalendarProvider` (sample week, relative to today) and `ManualCalendarProvider` (events typed in for "my closet").
+- `src/calendar/provider.ts`: `CalendarProvider` seam: `ManualCalendarProvider` (typed-in events) + the phone calendar. The demo closet/calendar no longer exist in the product; they live only in `tests/fixtures/demo.ts` as test data.
 - `src/tagging/tagger.ts`: `Tagger` seam. Today: manual tags only.
-- `src/storage/persist.ts`: AsyncStorage (one JSON blob `wmw:v1`); photos copied to the app document dir (native) or stored as data URI (web). Demo and "mine" data are fully separate (`AppData.demo` / `AppData.mine`).
+- `src/storage/persist.ts`: per-account local cache in AsyncStorage (`wmw:v2:<user id>`, `AppData` v2). The old `wmw:v1` blob is never read, imported or deleted. Photos are copied to the app document dir (native) or stored as data URI (web); sign-out wipes the account's cache and photo copies.
 
 ## Privacy rules
 Never commit real photos, calendar exports, `.env*`, keys or certificates (see `.gitignore`). Photos stay on device. If image recognition uses an external service: ask before sending a photo, keep credentials on a server, never in the app.
@@ -48,3 +49,18 @@ Never commit real photos, calendar exports, `.env*`, keys or certificates (see `
 1. Verify native calendar on a real iPhone/Android (permission prompt, calendar list, refresh after moving an event).
 2. Deploy `server/` somewhere reachable, set `RECOGNITION_URL`, and evaluate real-photo accuracy (leggings, dresses). Weather and recognition were only tested with mocked services in the sandbox.
 3. Device verification on real iPhone/Android (camera, permissions, RTL on a Hebrew-locale device, photo persistence).
+
+## Accounts + cloud sync (Supabase) — milestone 1
+- **Sign-in is required.** `App.tsx` renders `AuthScreen` until `useAuth().status === 'signedIn'` (email + password, email must be verified). `AppProvider` is keyed by user id, so an account switch drops all in-memory data. A new account starts empty (`emptyAppData`); no demo or browser data is imported.
+- **Client-safe config only:** `EXPO_PUBLIC_SUPABASE_URL` + `EXPO_PUBLIC_SUPABASE_ANON_KEY` (see `.env.example`; `src/cloud/config.ts` rejects service-role / `sb_secret_` keys). Never put a service key in the app, repo or CI. Pages builds read the repo variables `SUPABASE_URL` / `SUPABASE_ANON_KEY`.
+- **Backend (`supabase/`):** versioned migrations, table `wardrobe_items` (client-generated uuid id, `data` jsonb tags/availability, `photo_path`, `deleted_at` tombstone), private bucket `closet-photos` with object path `{user_id}/{item_id}/{photo_id}.jpg`. Owner-only RLS for select/insert/update/delete on both, each also requiring a verified email (`current_user_verified()`). Setup + dashboard settings (Confirm email ON): `supabase/README.md`. Catalog check: `supabase/tests/rls_policies.sql`.
+- **Sync (`src/cloud/engine.ts`, pure + tested in `tests/cloud-sync.test.ts`):** changes are queued per item in `AppData.sync.pending` (persisted), pushed as idempotent upserts, then changes from other devices are pulled (cursor + 5s overlap). Photo first, row second; the photo path is fixed per attempt so a retry after "photo uploaded, row failed" reuses the same object. Deletes are tombstones. Unsent local edits win over pulled rows. Failures show "לא נשמר בענן" (per tile + `AccountBar`) and retry with backoff, on foreground, or on tap. Photos from other devices load through 1h signed URLs (`useItemPhoto`).
+- **Synced now:** items (tags, availability, brand, source) and their photos. **Still local per account:** saved outfits/choices, history, manual events, settings (a later sync milestone).
+- **Live verification is pending until run against a real dev project:** `scripts/verify-rls.ts` (two verified test accounts, anon key only) and `supabase/tests/rls_policies.sql`. No Supabase project, CLI or Docker was available when this was written, so the migrations were never executed.
+
+## Next milestones
+1. Run migrations + `verify-rls.ts` on a dev Supabase project; two-device test (add item + photo on device 1, appears on device 2; account B sees nothing).
+2. Google/Apple sign-in; optional Google Calendar authorization (separate from sign-in); email-verification deep link (`scheme` + redirect URL).
+3. Sync saved outfits, preferences, history.
+4. Recognition (Gemini Flash-Lite candidate, pending real-image evaluation): the server must verify the Supabase access token and enforce per-user quotas BEFORE calling the model. Today `/analyze`, `/product`, `/receipt` are unauthenticated.
+5. Release requirements (tracked, not done): native EAS builds on real iPhone/Android (`eas.json` profiles exist; no EAS project id yet), in-app account deletion (App Store requirement; must also delete storage objects, which the `auth.users` cascade does not), privacy policy URL, App Store privacy labels and Play Data Safety (photos go to the cloud and, if used, to the recognition model), fix the permission text that says photos stay on the device, final bundle identifier (`app.wearmyweek.dev` is a placeholder), Play closed-test requirement.

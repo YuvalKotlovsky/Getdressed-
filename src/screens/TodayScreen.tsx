@@ -6,12 +6,12 @@ import { text } from '../ui';
 import { useApp } from '../state/AppContext';
 import { OutfitCard } from '../components/OutfitCard';
 import { Btn } from '../components/Btn';
-import { ModeBar } from '../components/ModeBar';
+import { AccountBar } from '../components/AccountBar';
 import { WeatherLine } from '../components/WeatherLine';
 import { AddEventModal } from '../components/AddEventModal';
 
 export function TodayScreen() {
-  const { week, refresh, refreshing, mode } = useApp();
+  const { week, refresh, refreshing } = useApp();
   const [adding, setAdding] = useState(false);
   const today = week[0];
   const now = new Date();
@@ -20,10 +20,10 @@ export function TodayScreen() {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}>
       <Text style={text(28, '700')}>היום</Text>
       <Text style={[text(14, '400', theme.muted), { marginBottom: 16 }]}>יום {dayNames[now.getDay()]}, {now.getDate()}.{now.getMonth() + 1}</Text>
-      <ModeBar />
+      <AccountBar />
       {today && <WeatherLine dKey={today.dateKey} />}
       {today?.entries.map((e) => <OutfitCard key={e.key} dKey={today.dateKey} entry={e} isToday />)}
-      {mode === 'mine' && <View style={{ flexDirection: 'row' }}><Btn label="הוספת אירוע להיום" kind="ghost" onPress={() => setAdding(true)} /></View>}
+      <View style={{ flexDirection: 'row' }}><Btn label="הוספת אירוע להיום" kind="ghost" onPress={() => setAdding(true)} /></View>
       <AddEventModal date={now} visible={adding} onClose={() => setAdding(false)} />
     </ScrollView>
   );

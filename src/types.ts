@@ -25,8 +25,11 @@ export interface Item {
   /** where the item came from (product link / receipt); never contains the receipt itself */
   source?: { store?: string; url?: string; reference?: string };
   favorite?: boolean;
-  /** Local photo (file:// on device, data: URI on web). Demo items have none. */
+  /** Local copy of the photo (file:// on device, data: URI on web). Never synced. */
   photoUri?: string;
+  /** Object path of the photo in the private cloud bucket (`{user_id}/{item_id}/{photo_id}.jpg`). */
+  photoPath?: string;
+  /** test fixtures only */
   demo?: boolean;
 }
 
@@ -103,8 +106,6 @@ export interface ModeData {
   eventMoves: Record<string, number>; // demo only: event id -> extra days moved
 }
 
-export type Mode = 'demo' | 'mine';
-
 export interface Settings {
   cityId: string;
   /** manual weather override per date key */
@@ -116,10 +117,31 @@ export interface Settings {
   receiptFingerprints?: string[];
 }
 
+/** A change that has not reached the cloud yet. Survives app restarts; retried until it succeeds. */
+export interface SyncOp {
+  kind: 'upsert' | 'delete';
+  attempts: number;
+  lastError?: string;
+  /** local photo waiting to be uploaded, and the photo id fixed for this attempt (retries reuse the same object path) */
+  photoLocalUri?: string;
+  photoId?: string;
+  /** set once the photo object exists in the bucket (the row write may still be pending) */
+  uploadedPath?: string;
+  /** object paths to delete (best effort) once the row write succeeds */
+  cleanup?: string[];
+}
+
+export interface SyncState {
+  /** newest `updated_at` seen from the server */
+  cursor?: string;
+  pending: Record<string, SyncOp>;
+}
+
+/** Everything cached on this device for ONE signed-in account. */
 export interface AppData {
-  version: 1;
-  mode: Mode;
+  version: 2;
+  userId: string;
   settings?: Settings;
-  demo: ModeData;
-  mine: ModeData;
+  data: ModeData;
+  sync: SyncState;
 }

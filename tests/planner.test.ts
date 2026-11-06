@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildWeek } from '../src/logic/week';
-import { DemoCalendarProvider } from '../src/calendar/provider';
-import { demoModeData, emptyModeData } from '../src/data/demo';
+import { DemoCalendarProvider } from './fixtures/demo';
+import { demoModeData } from './fixtures/demo';
+import { emptyModeData } from '../src/data/empty';
 import { classifyTitle } from '../src/logic/classify';
 import { choiceKey, planDay } from '../src/logic/recommend';
 import { dateKey } from '../src/logic/dates';

@@ -1,5 +1,7 @@
-import type { CalEvent, Item, ModeData, Occasion, Weather } from '../types';
-import { addDays, startOfDay } from '../logic/dates';
+import { emptyModeData } from '../../src/data/empty';
+import type { CalEvent, Item, ModeData, Occasion, Weather } from '../../src/types';
+import type { CalendarProvider } from '../../src/calendar/provider';
+import { addDays, startOfDay } from '../../src/logic/dates';
 
 type D = Omit<Item, 'available' | 'demo'>;
 const H: Weather[] = ['hot'], M: Weather[] = ['mild'], C: Weather[] = ['cold'];
@@ -31,11 +33,7 @@ const raw: D[] = [
 
 export const demoItems = (): Item[] => raw.map((r) => ({ ...r, available: true, demo: true }));
 
-export const emptyModeData = (items: Item[] = []): ModeData => ({
-  items, choices: {}, history: [], occasionOverrides: {}, manualEvents: [], eventMoves: {},
-});
-
-export const demoModeData = (): ModeData => emptyModeData(demoItems());
+export const demoModeData = (): ModeData => ({ ...emptyModeData(), items: demoItems() });
 
 /** Sample week relative to today so it is always current. Includes a meeting + workout on day 0. */
 export function demoEvents(now: Date = new Date()): CalEvent[] {
@@ -58,3 +56,15 @@ export function demoEvents(now: Date = new Date()): CalEvent[] {
 }
 
 export const manualOccasions: Occasion[] = ['work', 'workout', 'casual', 'evening', 'formal'];
+
+/** Test-only calendar: a sample week relative to `now`. Not part of the product. */
+export class DemoCalendarProvider implements CalendarProvider {
+  readonly id = 'manual' as const;
+  readonly isDemo = true;
+  constructor(private now: () => Date = () => new Date()) {}
+  async requestAccess() { return true; }
+  async listCalendars() { return [{ id: 'demo', title: 'demo' }]; }
+  async getEvents(from: Date, to: Date) {
+    return demoEvents(this.now()).filter((e) => e.start >= from.getTime() && e.start < to.getTime());
+  }
+}

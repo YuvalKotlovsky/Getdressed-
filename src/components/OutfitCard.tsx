@@ -14,7 +14,7 @@ const OCCASIONS: Occasion[] = ['work', 'workout', 'casual', 'evening', 'formal']
 const GAP = 10;
 
 export function OutfitCard({ dKey, entry, isToday }: { dKey: string; entry: PlanEntry; isToday: boolean }) {
-  const { nextLook, confirmLook, clearSaved, setOccasion, mode, moveDemoEvent, removeManualEvent } = useApp();
+  const { nextLook, confirmLook, clearSaved, setOccasion, removeManualEvent } = useApp();
   const [rowW, setRowW] = useState(300);
   const [editing, setEditing] = useState(false);
   const { event, outfit } = entry;
@@ -90,13 +90,7 @@ export function OutfitCard({ dKey, entry, isToday }: { dKey: string; entry: Plan
         {event && (
           <Pressable onPress={() => setEditing((v) => !v)}><Text style={text(12, '600', theme.accent)}>{editing ? 'סיום' : 'שינוי סוג'}</Text></Pressable>
         )}
-        {event && mode === 'demo' && (
-          <>
-            <Pressable onPress={() => moveDemoEvent(event.id, 1)}><Text style={text(12, '400', theme.muted)}>הזזה ליום הבא (הדגמה)</Text></Pressable>
-            <Pressable onPress={() => moveDemoEvent(event.id, -1)}><Text style={text(12, '400', theme.muted)}>הזזה ליום קודם</Text></Pressable>
-          </>
-        )}
-        {event && mode === 'mine' && event.calendarId === 'manual' && (
+        {event && event.calendarId === 'manual' && (
           <Pressable onPress={() => removeManualEvent(event.id)}><Text style={text(12, '400', theme.warn)}>הסרת האירוע</Text></Pressable>
         )}
       </View>

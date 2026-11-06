@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mapNativeEvents } from '../src/calendar/mapEvents';
 import { CompositeCalendarProvider, ManualCalendarProvider, type CalendarProvider } from '../src/calendar/provider';
 import { buildWeek } from '../src/logic/week';
-import { demoModeData } from '../src/data/demo';
+import { demoModeData } from './fixtures/demo';
 import type { CalEvent } from '../src/types';
 
 const NOW = new Date(2026, 10, 2, 8, 0, 0);

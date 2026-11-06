@@ -3,29 +3,42 @@ import { Platform } from 'react-native';
 import { File, Paths } from 'expo-file-system';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import type { AppData } from '../types';
-import { demoModeData, emptyModeData } from '../data/demo';
-import { DEFAULT_CITY } from '../weather/weather';
 
-const KEY = 'wmw:v1';
+import { accountKey, emptyAppData, parseStored } from '../cloud/scope';
 
-export const freshData = (): AppData => ({
-  version: 1, mode: 'demo', demo: demoModeData(), mine: emptyModeData(),
-  settings: { cityId: DEFAULT_CITY, weatherOverride: {} },
-});
-
-export async function loadData(): Promise<AppData> {
+/**
+ * Local cache for ONE account (`wmw:v2:<user id>`). The old browser/demo blob `wmw:v1` is never read,
+ * imported or deleted: a new account always starts empty.
+ */
+export async function loadData(userId: string): Promise<AppData> {
   try {
-    const s = await AsyncStorage.getItem(KEY);
-    if (s) {
-      const d = JSON.parse(s) as AppData;
-      if (d?.version === 1) return { ...d, settings: { ...d.settings, cityId: d.settings?.cityId ?? DEFAULT_CITY, weatherOverride: d.settings?.weatherOverride ?? {} } };
-    }
+    const s = await AsyncStorage.getItem(accountKey(userId));
+    const d = parseStored(s, userId);
+    if (d) return d;
   } catch {}
-  return freshData();
+  return emptyAppData(userId);
 }
 
-export async function saveData(d: AppData): Promise<void> {
-  try { await AsyncStorage.setItem(KEY, JSON.stringify(d)); } catch {}
+/** Returns false when the device could not store the data (full disk, blocked storage). */
+export async function saveData(d: AppData): Promise<boolean> {
+  try { await AsyncStorage.setItem(accountKey(d.userId), JSON.stringify(d)); return true; } catch { return false; }
+}
+
+/** Sign-out on a shared device: drop this account's cache and the photo copies it references. */
+export async function clearAccountCache(d: AppData): Promise<void> {
+  try { await AsyncStorage.removeItem(accountKey(d.userId)); } catch {}
+  if (Platform.OS === 'web') return;
+  for (const it of d.data.items) {
+    if (!it.photoUri || !it.photoUri.startsWith('file:')) continue;
+    try { new File(it.photoUri).delete(); } catch {}
+  }
+}
+
+/** Raw bytes of a stored photo (file:// on device, data: URI on web) for upload. */
+export async function readPhotoBytes(uri: string): Promise<ArrayBuffer> {
+  const r = await fetch(uri);
+  if (!r.ok && Platform.OS !== 'web') throw new Error(`photo read failed (${r.status})`);
+  return r.arrayBuffer();
 }
 
 export interface PreparedPhoto {

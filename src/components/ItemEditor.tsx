@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, Image, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { newUuid } from '../cloud/uuid';
+import { useItemPhoto } from '../cloud/useItemPhoto';
 import { COLORS, theme } from '../theme';
 import { SUBTYPES, categoryLabel, dressinessLabel, occasionLabel, partLabel, weatherLabel } from '../i18n';
 import { cardStyle, rowDir, text } from '../ui';
@@ -19,7 +21,7 @@ const WEATHERS: Weather[] = ['hot', 'mild', 'cold'];
 
 /** What the form edits. A NEW item starts with nothing chosen: unrecognized fields stay empty until the user fills them. */
 type Draft = Omit<Item, 'category' | 'part' | 'color' | 'dressiness'> & { category?: Category; part?: Part; color?: string; dressiness?: Dressiness };
-const blank = (): Draft => ({ id: `u-${Date.now()}`, name: '', available: true, occasions: [] });
+const blank = (): Draft => ({ id: newUuid(), name: '', available: true, occasions: [] });
 
 type Phase = 'none' | 'consent' | 'running' | 'done' | 'failed';
 const FIELD_LABEL: Record<TagField, string> = { category: 'קטגוריה', subtype: 'סוג הבגד', color: 'צבע', occasions: 'אירועים', dressiness: 'רמת רשמיות', weather: 'מזג אוויר' };
@@ -52,6 +54,7 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
   const [multiple, setMultiple] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const isNew = !item;
+  const shownPhoto = useItemPhoto(it);
 
   useEffect(() => {
     if (!visible) return;
@@ -155,7 +158,7 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
 
           <View style={{ alignItems: 'center', marginVertical: 16 }}>
             <View style={{ width: 200, height: 250, borderRadius: 14, backgroundColor: theme.accentSoft, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.line }}>
-              {it.photoUri ? <Image source={{ uri: it.photoUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : <Text style={text(14, '400', theme.muted)}>ללא תמונה</Text>}
+              {shownPhoto ? <Image source={{ uri: shownPhoto }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : <Text style={text(14, '400', theme.muted)}>ללא תמונה</Text>}
             </View>
             <View style={{ flexDirection: rowDir, gap: 10, marginTop: 12, width: '100%' }}>
               <Btn label="מהגלריה" kind="ghost" onPress={() => pick(false)} />

@@ -40,6 +40,9 @@ jobs:
           EXPO_BASE_URL: '/${{ github.event.repository.name }}'
           # optional: public URL of the recognition server (repo Settings > Variables > Actions > RECOGNITION_URL)
           EXPO_PUBLIC_RECOGNITION_URL: ${{ vars.RECOGNITION_URL }}
+          # public, client-safe Supabase settings (repo Variables). Without them the web build shows "not connected" instead of sign-in.
+          EXPO_PUBLIC_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
       - name: Verify sub-path build and add Pages helpers
         run: |
           grep -q '/${{ github.event.repository.name }}/_expo/' dist/index.html
