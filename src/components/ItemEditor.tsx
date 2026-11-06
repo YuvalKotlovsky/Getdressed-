@@ -164,7 +164,7 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
               <Btn label="מהגלריה" kind="ghost" onPress={() => pick(false)} />
               <Btn label="צילום" kind="ghost" onPress={() => pick(true)} />
             </View>
-            <Text style={[text(12, '400', theme.muted), { marginTop: 8 }]}>התמונה נשמרת במכשיר בלבד. בגד אחד בכל תמונה, ובצילום מסך נזהה את הפריט הראשי שבחזית.</Text>
+            <Text style={[text(12, '400', theme.muted), { marginTop: 8 }]}>התמונה נשמרת במכשיר ומסונכרנת לאחסון ענן פרטי בחשבון שלכם (רק אתם יכולים לראות אותה). בגד אחד בכל תמונה, ובצילום מסך נזהה את הפריט הראשי שבחזית.</Text>
           </View>
 
           {isNew && status !== 'ready' && status !== 'checking' && (
@@ -184,7 +184,7 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
             <View style={[cardStyle, { padding: 14, marginBottom: 8 }]}>
               <Text style={text(15, '700')}>ניתוח אוטומטי של התמונה</Text>
               <Text style={[text(13, '400', theme.muted), { marginTop: 6 }]}>
-                אם תאשרו, התמונה שבחרתם (מוקטנת) תישלח לשרת הזיהוי של האפליקציה, שמעביר אותה לשירות בינה מלאכותית כדי להציע תגיות. לא נשלחים שם, מיקום או נתונים אחרים, והתמונה לא נשמרת בשרת. בלי אישור לא נשלח דבר ואפשר לתייג ידנית.
+                אם תאשרו, התמונה שבחרתם (מוקטנת) תישלח לשרת הזיהוי של האפליקציה, שמעביר אותה לשירות בינה מלאכותית כדי להציע תגיות. לא נשלחים שם, מיקום או נתונים אחרים, והתמונה לא נשמרת בשרת. האישור הזה נפרד משמירת הארון בענן, ובלעדיו לא נשלח דבר לניתוח ואפשר לתייג ידנית.
               </Text>
               <View style={{ flexDirection: rowDir, gap: 10, marginTop: 12 }}>
                 <Btn label="דילוג, תיוג ידני" kind="ghost" onPress={() => setPhase('none')} />

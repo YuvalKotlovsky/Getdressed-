@@ -37,6 +37,7 @@
     "typecheck": "tsc --noEmit",
     "export": "expo export --platform web",
     "server": "tsx server/index.ts",
+    "verify:rls": "tsx --env-file=.env.verify scripts/verify-rls.ts",
     "verify:services": "tsx scripts/verify-services.ts"
   },
   "private": true,

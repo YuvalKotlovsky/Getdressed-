@@ -17,15 +17,28 @@ const REQUIRED = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'TEST_A_EMAIL', 'TEST_A_P
 const env = (k: string) => (process.env[k] ?? '').trim();
 
 const missing = REQUIRED.filter((k) => !env(k));
+// Guard against pointing the checks at the wrong project: the host must belong to the project ref you name.
+const EXPECT_REF = env('EXPECT_PROJECT_REF');
 if (missing.length) {
   console.log('PENDING: live checks did not run. Nothing was verified.');
   console.log('Set these environment variables (see scripts/README-verify-rls.md):');
   for (const k of missing) console.log(`  - ${k}`);
+  console.log('Also required for a hosted project: EXPECT_PROJECT_REF (the DEVELOPMENT project ref; SUPABASE_URL must be https://<ref>.supabase.co).');
   console.log('Optional: TEST_UNVERIFIED_EMAIL, TEST_UNVERIFIED_PASSWORD, TEST_B_EXPECT_EMPTY=1');
   process.exit(2);
 }
 
 const URL_ = env('SUPABASE_URL').replace(/\/+$/, '');
+{
+  let host = '';
+  try { host = new URL(URL_).hostname; } catch {}
+  const local = host === 'localhost' || host === '127.0.0.1';
+  if (!local && (!EXPECT_REF || host !== `${EXPECT_REF}.supabase.co`)) {
+    console.log(`REFUSING TO RUN: set EXPECT_PROJECT_REF to the DEVELOPMENT project ref and make SUPABASE_URL match it (target host: ${host || 'invalid'}).`);
+    process.exit(1);
+  }
+  console.log(`Target: ${host}${local ? ' (local)' : ' (matches EXPECT_PROJECT_REF)'}`);
+}
 const ANON = env('SUPABASE_ANON_KEY');
 const BUCKET = 'closet-photos';
 const TABLE = 'wardrobe_items';

@@ -32,7 +32,7 @@ export function AccountBar() {
           </Text>
         </Pressable>
       ) : (
-        <Text style={[text(12, '400', theme.muted), { marginTop: 6 }]}>{syncing ? 'מסנכרן…' : offline ? 'אין חיבור לענן. מוצג מה שנשמר במכשיר.' : 'הארון שמור בחשבון שלכם ומסונכרן בין המכשירים.'}</Text>
+        <Text style={[text(12, '400', theme.muted), { marginTop: 6 }]}>{syncing ? 'מסנכרן…' : offline ? 'אין חיבור לענן. מוצג מה שנשמר במכשיר.' : 'הארון והתמונות שלו נשמרים בחשבון שלכם באחסון ענן פרטי ומסונכרנים בין המכשירים.'}</Text>
       )}
       {localSaveFailed && <Text style={[text(12, '600', theme.warn), { marginTop: 4 }]}>לא הצלחנו לשמור במכשיר. פנו מקום ונסו שוב.</Text>}
       <Pressable onPress={() => setCal(true)} style={{ marginTop: 6 }}>

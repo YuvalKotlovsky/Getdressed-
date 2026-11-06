@@ -39,3 +39,15 @@ This is a static check of the catalog only. The cross-account behavioural test (
 - Sync cursor: `updated_at` is set by the server with `clock_timestamp()`. Clients should re-read with a small overlap (for example cursor minus a few seconds) and dedupe by `id` to avoid missing rows committed out of order.
 - Photo path contract: `{user_id}/{item_id}/{photo_id}.jpg`; `wardrobe_items.photo_path` must start with `{user_id}/{item_id}/`. Storage policies check only the first folder (user id).
 - Deleting a user cascades to their rows; storage objects are not deleted automatically.
+
+## Live verification runbook (development project only)
+
+Do these in order. Nothing below needs the service-role key or the database password to leave the dashboard.
+
+1. **Create the project** (supabase.com > New project). Name it e.g. `wearmyweek-dev`. Write down the **Reference ID** (Project Settings > General). Production must be a different project.
+2. **Auth settings** (Authentication > Sign In / Providers): Email provider on, **Confirm email ON**, **Allow anonymous sign-ins OFF**, minimum password length 8 or more. Leave Google/Apple off for now.
+3. **Apply the migrations** in the SQL editor of THIS project (check the project name and ref in the dashboard header first): paste and run `migrations/20261106000000_wardrobe_items.sql`, then `migrations/20261106000100_closet_photos_storage.sql`. Then paste and run `tests/rls_policies.sql`; the result must say `ALL RLS CATALOG CHECKS PASSED`.
+4. **Create two synthetic test users** (Authentication > Users > Add user > Create new user, tick **Auto Confirm User**), e.g. `wmw-test-a@example.com` and `wmw-test-b@example.com`, with passwords you generate. Optional third user left unconfirmed for the unverified check (do not tick Auto Confirm).
+5. **App config:** create `.env` (git-ignored) with `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` (Project Settings > API: Project URL and the **anon / publishable** key only).
+6. **Verification config:** create `.env.verify` (git-ignored, separate from `.env`) with `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `EXPECT_PROJECT_REF`, `TEST_A_EMAIL`, `TEST_A_PASSWORD`, `TEST_B_EMAIL`, `TEST_B_PASSWORD` (see `.env.example`). Then `npm run verify:rls`. Exit 0 = all passed, 1 = failures, 2 = pending. The script refuses to run if the URL does not match `EXPECT_PROJECT_REF`.
+7. **Two isolated browser sessions:** `npm run web`; open the app in a normal window and in a private window (separate storage). Sign in as A in one and B in the other, add an item with a photo as A, and confirm it appears for A in a second A session, never for B. Offline: DevTools > Network > Offline, save an item (it shows "לא נשמר בענן"), go back online, and confirm exactly one copy exists in both sessions.
