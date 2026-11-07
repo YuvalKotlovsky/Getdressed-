@@ -61,6 +61,24 @@ begin
     raise exception 'RLS CHECK FAILED: authenticated cannot execute public.current_user_verified()';
   end if;
 
+  -- 2b. The authenticated role has the privileges the app needs (policies then limit rows to the owner).
+  if not has_schema_privilege('authenticated', 'public', 'usage') then
+    raise exception 'RLS CHECK FAILED: authenticated has no USAGE on schema public';
+  end if;
+  foreach cmd_name in array array['select', 'insert', 'update', 'delete'] loop
+    if not has_table_privilege('authenticated', 'public.wardrobe_items', cmd_name) then
+      raise exception 'RLS CHECK FAILED: authenticated lacks % on public.wardrobe_items (add the explicit grant)', upper(cmd_name);
+    end if;
+  end loop;
+  if not has_schema_privilege('authenticated', 'storage', 'usage') then
+    raise exception 'RLS CHECK FAILED: authenticated has no USAGE on schema storage';
+  end if;
+  foreach cmd_name in array array['select', 'insert', 'update', 'delete'] loop
+    if not has_table_privilege('authenticated', 'storage.objects', cmd_name) then
+      raise exception 'RLS CHECK FAILED: authenticated lacks % on storage.objects (photo upload/read/replace/remove would fail)', upper(cmd_name);
+    end if;
+  end loop;
+
   -- 3. wardrobe_items policies: all four commands, authenticated only, verified required.
   foreach cmd_name in array array['SELECT', 'INSERT', 'UPDATE', 'DELETE'] loop
     select count(*) into n

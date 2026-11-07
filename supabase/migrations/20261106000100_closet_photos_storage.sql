@@ -9,7 +9,19 @@ set public = false,
     file_size_limit = 5242880,
     allowed_mime_types = array['image/jpeg'];
 
--- RLS is already enabled on storage.objects by Supabase; policies only below.
+-- RLS is already enabled on storage.objects by Supabase.
+-- Explicit privileges for the authenticated role (independent of the "expose new tables" project setting).
+-- Row access is still limited by the owner-only policies below; anon gets no policy and therefore no rows.
+-- Wrapped so a restricted migration role cannot break the migration; if it did, the NOTICE says so and
+-- supabase/tests/rls_policies.sql fails until the grants exist.
+do $$
+begin
+  grant usage on schema storage to authenticated;
+  grant select, insert, update, delete on table storage.objects to authenticated;
+exception when insufficient_privilege then
+  raise notice 'Could not grant on storage.objects (insufficient privilege). Run the grants as the project owner, then re-run supabase/tests/rls_policies.sql.';
+end
+$$;
 
 drop policy if exists "closet_photos_select_own" on storage.objects;
 create policy "closet_photos_select_own"

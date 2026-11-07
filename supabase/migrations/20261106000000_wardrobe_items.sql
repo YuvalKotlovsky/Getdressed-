@@ -105,6 +105,10 @@ create trigger wardrobe_items_lock_user_id
 -- ---------------------------------------------------------------------------
 -- Privileges
 -- ---------------------------------------------------------------------------
+-- Explicit grants: this project has "Automatically expose new tables" OFF, so nothing is granted by default.
+-- RLS below still restricts every row to its owner; these grants only let the authenticated role reach the policies.
+grant usage on schema public to authenticated;
+
 revoke all on table public.wardrobe_items from public;
 revoke all on table public.wardrobe_items from anon;
 grant select, insert, update, delete on table public.wardrobe_items to authenticated;

@@ -51,3 +51,10 @@ Do these in order. Nothing below needs the service-role key or the database pass
 5. **App config:** create `.env` (git-ignored) with `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` (Project Settings > API: Project URL and the **anon / publishable** key only).
 6. **Verification config:** create `.env.verify` (git-ignored, separate from `.env`) with `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `EXPECT_PROJECT_REF`, `TEST_A_EMAIL`, `TEST_A_PASSWORD`, `TEST_B_EMAIL`, `TEST_B_PASSWORD` (see `.env.example`). Then `npm run verify:rls`. Exit 0 = all passed, 1 = failures, 2 = pending. The script refuses to run if the URL does not match `EXPECT_PROJECT_REF`.
 7. **Two isolated browser sessions:** `npm run web`; open the app in a normal window and in a private window (separate storage). Sign in as A in one and B in the other, add an item with a photo as A, and confirm it appears for A in a second A session, never for B. Offline: DevTools > Network > Offline, save an item (it shows "לא נשמר בענן"), go back online, and confirm exactly one copy exists in both sessions.
+
+## Project settings this setup assumes (`wearmyweek-dev`)
+
+- "Automatically expose new tables" OFF: nothing is granted by default, so the migrations grant `authenticated` explicitly (schema usage, table CRUD on `wardrobe_items`, CRUD on `storage.objects`). `anon` is granted nothing.
+- Automatic RLS ON: harmless; the migrations enable and force RLS themselves, and `tests/rls_policies.sql` fails if any public table lacks it.
+- The `public` schema must remain in Data API > Exposed schemas (default).
+- Grants give access to the table; the owner-only policies decide which rows. Removing a grant breaks the app, removing a policy would expose data: both are checked by `tests/rls_policies.sql`.
