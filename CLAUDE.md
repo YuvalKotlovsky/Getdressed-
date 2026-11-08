@@ -67,6 +67,25 @@ Never commit real photos, calendar exports, `.env*`, keys or certificates (see `
 - **Calendar:** authorization stays optional and separate from sign-in. Events are read on the device today. Do NOT introduce server-side calendar storage (tokens, events) without the owner's explicit approval first.
 - Consequence for existing code: `/analyze`, `/product`, `/receipt` are unauthenticated today and must not be exposed publicly (nor given a real provider key) until the token check and quotas exist.
 
+## Git and environments workflow (confirmed)
+**Environments: dev, staging, prod.** Same variable names everywhere; only the values differ. Each environment has its OWN Supabase project, backend deployment/configuration and credentials. Nothing is shared between them (no shared keys, buckets, users or databases).
+
+| | dev | staging | prod |
+|---|---|---|---|
+| Supabase project | `wearmyweek-dev` (exists, migrations applied) | its own project (to provision) | its own project (to provision) |
+| Backend | local / dev deployment | its own deployment + provider keys | its own deployment + provider keys |
+| App builds | local `.env`, Expo Go / `development` EAS profile | `preview` EAS profile (internal) | `production` EAS profile (stores) |
+| Test accounts | synthetic, `.env.verify` | synthetic only | none; never run `verify:rls` against prod |
+
+- **App config (public values only):** `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_RECOGNITION_URL`. Local dev reads `.env`; staging/prod values live in the build system (EAS environment variables per profile, GitHub Environments `staging`/`production`), never in Git. Local files `.env`, `.env.verify`, `.env.staging`, `.env.production` are git-ignored (`.env.*`); only `.env.example` is tracked. Planned (not implemented): `EXPO_PUBLIC_APP_ENV=dev|staging|prod` so the app and logs can show which environment a build points at.
+- **Backend secrets** (Gemini key, service-role/JWT secrets, quota store credentials) exist only in each environment's backend secret store. A service-role key never enters the app, the repo, chat or logs.
+- **Before running anything against a project, verify the target** (project ref/URL). `verify:rls` refuses unless `SUPABASE_URL` matches `EXPECT_PROJECT_REF`.
+- **Branches and commits:** work on feature branches off `main` (`feature/…`, `fix/…`), focused commits, no direct commits to `main`. Do not merge a branch with unresolved blockers.
+- **Every PR states:** (1) what changed and why, (2) migrations included (file names, and which environments they were applied to), (3) ACTUAL verification results (commands run and outcomes; label live vs simulated vs pending), (4) remaining gaps and known risks.
+- **Promotion:** one known commit is promoted dev -> staging -> prod, never rebuilt from different source. Tag the release commit (`vMAJOR.MINOR.PATCH`) and record, per release: tag, commit SHA, EAS build ids per platform, migration versions applied per environment, and who verified what. Keep that record in the release notes of the tag.
+- **Migrations are immutable once applied to any shared project.** `20261106000000_wardrobe_items.sql` and `20261106000100_closet_photos_storage.sql` are applied in dev and must not be edited. Corrections are NEW timestamped migrations. Apply to staging then prod only from the promoted commit, and run `supabase/tests/rls_policies.sql` after each.
+- **GitHub Pages web preview (`pages.yml`) currently publishes on every push to `main`.** Before merging any change that makes the web build a real app, it must not publish automatically with dev credentials or an unauthenticated recognition server: use manual dispatch and per-environment GitHub Environment variables, and never point the public site at `wearmyweek-dev`.
+
 ## Ordered plan (current)
 1. **Now: live Supabase verification** on the `wearmyweek-dev` project: apply both migrations, run `supabase/tests/rls_policies.sql` and `npm run verify:rls` (anon key + two synthetic verified accounts), then two isolated browser sessions (empty new account, item + photo visible in a second session of the same account, no leak on account switch, offline save then reconnect with no duplicate). Gate for everything below. Live results are PENDING until actually run.
 2. **Backend authentication + quotas (plan, then build):** verify Supabase JWTs on the backend (JWKS / auth endpoint), per-user ownership checks, a quota store and limits (per user per day/month, per endpoint), clean error codes the app can show in Hebrew, no provider call before auth + quota pass, server tests with fake tokens. Replace `RECOGNITION_TOKEN` style shared secrets.
