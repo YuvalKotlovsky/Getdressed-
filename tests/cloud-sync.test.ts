@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { backoffMs, flushOp, mergeRemote, planDelete, planSave, pullAll, photoObjectPath, itemToRemoteData, type CloudApi, type RemoteRow } from '../src/cloud/engine';
+import { ItemDeletedError, applyFlushResult, applyPull, applyRestoreStale, backoffMs, flushOp, mergeRemote, planDelete, planSave, pullAll, photoObjectPath, itemToRemoteData, type CloudApi, type RemoteRow } from '../src/cloud/engine';
 import { accountKey, emptyAppData, parseStored } from '../src/cloud/scope';
 import { parseCloudConfig } from '../src/cloud/config';
 import { authErrorHe } from '../src/auth/errors';
-import type { Item, SyncOp } from '../src/types';
+import type { Item, StaleEdit, SyncOp } from '../src/types';
 
 const UID = '11111111-1111-4111-8111-111111111111';
 const ITEM_ID = '22222222-2222-4222-8222-222222222222';
@@ -20,12 +20,13 @@ function fake() {
     async upsertItem(r) {
       if (f.offline) throw new Error('fetch failed');
       if (f.failUpsert > 0) { f.failUpsert--; throw new Error('row write failed'); }
+      if (rows.get(r.id)?.deleted_at) throw new ItemDeletedError(); // mirrors trigger wardrobe_items_tombstone_terminal
       f.upserts++;
       rows.set(r.id, { id: r.id, data: r.data, photo_path: r.photo_path, deleted_at: null, updated_at: new Date(Date.UTC(2026, 0, 1, 0, 0, ++clock)).toISOString() });
     },
     async tombstoneItem(id) {
       if (f.offline) throw new Error('fetch failed');
-      const r = rows.get(id); if (r) rows.set(id, { ...r, deleted_at: 'x', updated_at: new Date(Date.UTC(2026, 0, 1, 0, 0, ++clock)).toISOString() });
+      const r = rows.get(id); if (r) rows.set(id, { ...r, deleted_at: r.deleted_at ?? 'x', updated_at: new Date(Date.UTC(2026, 0, 1, 0, 0, ++clock)).toISOString() });
     },
     async listChanged(after, limit) {
       if (f.offline) throw new Error('fetch failed');
@@ -188,4 +189,158 @@ test('auth errors are Hebrew and never leak server text', () => {
   assert.match(authErrorHe('invalid_credentials'), /שגויים/);
   assert.match(authErrorHe('email_not_confirmed'), /לאמת/);
   assert.doesNotMatch(authErrorHe('some weird internal postgres error'), /postgres/);
+});
+
+// ---------- delete wins: stale edit from another device ----------
+type Device = { items: Item[]; pending: Record<string, SyncOp>; conflicts: StaleEdit[]; discard: string[]; cursor?: string };
+const device = (): Device => ({ items: [], pending: {}, conflicts: [], discard: [] });
+const NOW = '2026-11-08T10:00:00.000Z';
+const edit = (d: Device, it: Item) => {
+  const prev = d.items.find((i) => i.id === it.id);
+  d.items = prev ? d.items.map((i) => (i.id === it.id ? it : i)) : [...d.items, it];
+  d.pending = { ...d.pending, [it.id]: planSave(prev, it, d.pending[it.id], ids) };
+};
+const remove = (d: Device, id: string) => {
+  const prev = d.items.find((i) => i.id === id);
+  d.items = d.items.filter((i) => i.id !== id);
+  d.pending = { ...d.pending, [id]: planDelete(prev, d.pending[id]) };
+};
+async function sync(api: CloudApi, d: Device) {
+  for (const id of Object.keys(d.pending)) {
+    const op = d.pending[id];
+    const res = await flushOp(api, UID, id, op, d.items.find((i) => i.id === id), read);
+    const s = applyFlushResult({ items: d.items, pending: d.pending, conflicts: d.conflicts, discard: d.discard }, id, op, res, NOW);
+    d.items = s.items; d.pending = s.pending; d.conflicts = s.conflicts; d.discard = s.discard;
+  }
+  const { rows, cursor } = await pullAll(api, d.cursor);
+  const s = applyPull({ items: d.items, pending: d.pending, conflicts: d.conflicts, discard: d.discard }, rows, NOW);
+  d.items = s.items; d.pending = s.pending; d.conflicts = s.conflicts; d.discard = s.discard; d.cursor = cursor;
+}
+
+test('regression: both clients load an item, A deletes and syncs, B submits a stale edit -> item stays deleted for both', async () => {
+  const { api, rows } = fake();
+  const a = device(), b = device();
+  edit(a, item({ name: 'מקור' }));
+  await sync(api, a);
+  await sync(api, b);
+  assert.equal(a.items.length, 1);
+  assert.equal(b.items.length, 1, 'both clients loaded the item');
+
+  remove(a, ITEM_ID);
+  await sync(api, a);
+  assert.ok(rows.get(ITEM_ID)?.deleted_at, 'A deleted it in the cloud');
+
+  edit(b, item({ name: 'עריכה ישנה מ-B' })); // B has not refreshed yet
+  await sync(api, b);
+
+  assert.equal(rows.get(ITEM_ID)?.data.name, 'מקור', 'the stale edit did not change the cloud record');
+  assert.ok(rows.get(ITEM_ID)?.deleted_at, 'the cloud record is still deleted');
+  await sync(api, a);
+  await sync(api, b);
+  assert.equal(a.items.length, 0, 'A: still deleted after refresh');
+  assert.equal(b.items.length, 0, 'B: still deleted after refresh');
+  assert.deepEqual(b.pending, {}, 'nothing left to retry');
+  assert.equal(b.conflicts.length, 1, 'B is told about the rejected edit');
+  assert.equal(b.conflicts[0].item.name, 'עריכה ישנה מ-B', 'the user edit is preserved, not lost');
+});
+
+test('stale edit after remote delete is caught at pull time (before any push) and the edit is kept', async () => {
+  const { api, rows } = fake();
+  const a = device(), b = device();
+  edit(a, item());
+  await sync(api, a); await sync(api, b);
+  remove(a, ITEM_ID); await sync(api, a);
+  edit(b, item({ name: 'ערוך אצל B' }));              // unsent edit on B
+  const { rows: pulled } = await pullAll(api, b.cursor);
+  const s = applyPull({ items: b.items, pending: b.pending, conflicts: b.conflicts, discard: b.discard }, pulled, NOW);
+  assert.equal(s.items.length, 0);
+  assert.deepEqual(s.pending, {});
+  assert.equal(s.conflicts[0].item.name, 'ערוך אצל B');
+  assert.ok(rows.get(ITEM_ID)?.deleted_at);
+});
+
+test('a rejected edit with a new photo discards the uploaded object and never touches the deleted row', async () => {
+  const { api, rows, objects } = fake();
+  const a = device(), b = device();
+  edit(a, item()); await sync(api, a); await sync(api, b);
+  remove(a, ITEM_ID); await sync(api, a);
+  edit(b, item({ photoUri: 'file:///new.jpg', name: 'עם תמונה חדשה' }));
+  await sync(api, b);
+  assert.equal(objects.size, 0, 'the photo uploaded for the rejected edit was removed');
+  assert.equal(rows.get(ITEM_ID)?.photo_path, null);
+  assert.equal(b.conflicts.length, 1);
+});
+
+test('repeating a delete is harmless; a stale delete+edit race resolves to deleted', async () => {
+  const { api, rows } = fake();
+  const a = device();
+  edit(a, item()); await sync(api, a);
+  remove(a, ITEM_ID); await sync(api, a);
+  const first = rows.get(ITEM_ID)?.deleted_at;
+  a.pending = { [ITEM_ID]: planDelete(undefined, undefined) };
+  await sync(api, a);
+  assert.equal(rows.get(ITEM_ID)?.deleted_at, first, 'original deletion time is kept');
+  assert.deepEqual(a.pending, {});
+});
+
+test('an unsent edit survives a pull when the item is NOT deleted (live edits: last write wins)', async () => {
+  const { api } = fake();
+  const a = device(), b = device();
+  edit(a, item()); await sync(api, a); await sync(api, b);
+  edit(b, item({ name: 'חדש אצל B' }));
+  const { rows: pulled } = await pullAll(api, undefined);
+  const s = applyPull({ items: b.items, pending: b.pending, conflicts: b.conflicts, discard: b.discard }, pulled, NOW);
+  assert.equal(s.items[0].name, 'חדש אצל B');
+  assert.ok(s.pending[ITEM_ID]);
+  assert.equal(s.conflicts.length, 0);
+});
+
+test('edited again while a push was in flight: the stale result is ignored, the newer op stays', () => {
+  const it = item({ name: 'v2' });
+  const sent: SyncOp = { kind: 'upsert', attempts: 0 };
+  const newer: SyncOp = { kind: 'upsert', attempts: 0, photoId: 'newer' };
+  const before = { items: [it], pending: { [ITEM_ID]: newer }, conflicts: [], discard: [] };
+  assert.equal(applyFlushResult(before, ITEM_ID, sent, { done: true, rejected: 'deleted', discard: [] }, NOW), before);
+});
+
+test('pull-time conflict lists the uploaded-but-unsent photo for removal; a pending DELETE op is not a conflict', async () => {
+  const { api } = fake();
+  const a = device(), b = device();
+  edit(a, item()); await sync(api, a); await sync(api, b);
+  remove(a, ITEM_ID); await sync(api, a);
+  const upPath = `${UID}/${ITEM_ID}/ph9.jpg`;
+  b.pending = { [ITEM_ID]: { kind: 'upsert', attempts: 1, uploadedPath: upPath, cleanup: [`${UID}/${ITEM_ID}/old.jpg`] } };
+  const { rows } = await pullAll(api, undefined);
+  const s = applyPull({ items: b.items, pending: b.pending, conflicts: [], discard: [] }, rows, NOW);
+  assert.deepEqual(s.discard.sort(), [upPath, `${UID}/${ITEM_ID}/old.jpg`].sort());
+  assert.equal(s.conflicts.length, 1);
+  // a user who ALSO deleted it locally has nothing to resolve
+  const s2 = applyPull({ items: [], pending: { [ITEM_ID]: planDelete(undefined, undefined) }, conflicts: [], discard: [] }, rows, NOW);
+  assert.equal(s2.conflicts.length, 0);
+  assert.ok(s2.pending[ITEM_ID], 'the delete op is kept and will finish idempotently');
+});
+
+test('save a rejected edit as a NEW item: new id, queued, deleted id never reused, double tap is harmless', () => {
+  const edited = item({ name: 'העריכה שלי', photoUri: 'file:///mine.jpg', photoPath: `${UID}/${ITEM_ID}/old.jpg` });
+  const s0 = { items: [], pending: {}, conflicts: [{ id: ITEM_ID, item: edited, at: NOW }], discard: [] };
+  const NEW_ID = '33333333-3333-4333-8333-333333333333';
+  const s1 = applyRestoreStale(s0, ITEM_ID, NEW_ID, () => 'ph-new');
+  assert.equal(s1.items.length, 1);
+  assert.equal(s1.items[0].id, NEW_ID);
+  assert.notEqual(s1.items[0].id, ITEM_ID);
+  assert.equal(s1.items[0].name, 'העריכה שלי');
+  assert.equal(s1.items[0].photoPath, undefined, 'the old cloud photo path is not carried over');
+  assert.equal(s1.conflicts.length, 0);
+  assert.equal(s1.pending[NEW_ID].photoLocalUri, 'file:///mine.jpg', 'the local photo is uploaded for the new item');
+  const s2 = applyRestoreStale(s1, ITEM_ID, '44444444-4444-4444-8444-444444444444', () => 'x');
+  assert.equal(s2, s1, 'a second tap finds nothing and changes nothing');
+});
+
+test('conflicts and the discard list survive save/reload of the account cache', () => {
+  const d = emptyAppData(UID);
+  d.conflicts = [{ id: ITEM_ID, item: item({ name: 'x' }), at: NOW }];
+  d.sync.discard = ['a/b/c.jpg'];
+  const back = parseStored(JSON.stringify(d), UID)!;
+  assert.equal(back.conflicts[0].item.name, 'x');
+  assert.deepEqual(back.sync.discard, ['a/b/c.jpg']);
 });

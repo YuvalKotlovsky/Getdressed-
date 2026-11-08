@@ -34,6 +34,12 @@ Paste `tests/rls_policies.sql` into the SQL editor, or run `psql "<db url>" -f s
 
 This is a static check of the catalog only. The cross-account behavioural test (user A cannot read or write user B's rows or photos, unverified users are blocked) is the TypeScript script `scripts/verify-rls.ts`, owned by the QA reviewer.
 
+## Delete wins (migration `20261108000000_wardrobe_items_tombstone_terminal.sql`)
+A soft-deleted item is terminal: later edits, upserts or attempts to clear `deleted_at` fail with `item_deleted` (SQLSTATE P0001); repeating the delete is allowed. Apply this migration to a project BEFORE running `verify:rls` (it includes a live DELETE WINS check) and re-run `tests/rls_policies.sql`. The owner can still hard-delete a row through the API; the app never does.
+
+## Unverified-email test
+`tests/unverified_predicate.sql` impersonates an UNCONFIRMED user inside the database and checks the table and the bucket, with a positive control (it confirms the user inside the same transaction, checks access works, then restores). Create the unconfirmed user: Authentication > Users > Add user > Create new user, leave **Auto Confirm User UNCHECKED**. Put its email into the script's `test_email` (never commit it) and run it in the SQL Editor of the DEVELOPMENT project. For `npm run verify:rls`, also set `TEST_UNVERIFIED_EMAIL` / `TEST_UNVERIFIED_PASSWORD` in `.env.verify`; expect "sign-in refused" because Auth issues no session to an unconfirmed user.
+
 ## Notes
 
 - Sync cursor: `updated_at` is set by the server with `clock_timestamp()`. Clients should re-read with a small overlap (for example cursor minus a few seconds) and dedupe by `id` to avoid missing rows committed out of order.

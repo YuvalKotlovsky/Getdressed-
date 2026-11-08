@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import type { Settings, AppData, CalEvent, Choice, DayPlan, Item, ModeData, Occasion, Weather } from '../types';
+import type { Settings, AppData, CalEvent, Choice, DayPlan, Item, ModeData, Occasion, StaleEdit, Weather } from '../types';
 import { cityById, fetchForecast, makeWeatherSource, type City, type Forecast } from '../weather/weather';
 import { clearAccountCache, loadData, readPhotoBytes, saveData } from '../storage/persist';
 import { CompositeCalendarProvider, ManualCalendarProvider, type CalendarProvider } from '../calendar/provider';
@@ -9,7 +9,7 @@ import { buildWeek } from '../logic/week';
 import { choiceKey } from '../logic/recommend';
 import { emptyAppData } from '../cloud/scope';
 import { getSupabase, supabaseApi } from '../cloud/client';
-import { backoffMs, flushOp, mergeRemote, planDelete, planSave, pullAll, type CloudApi, type FlushResult } from '../cloud/engine';
+import { applyFlushResult, applyPull, applyRestoreStale, backoffMs, flushOp, planDelete, planSave, pullAll, type CloudApi, type FlushResult } from '../cloud/engine';
 import { newUuid } from '../cloud/uuid';
 import { useAuth } from '../auth/AuthContext';
 
@@ -43,6 +43,11 @@ interface Ctx {
   offline: boolean;
   /** this device could not store the local cache */
   localSaveFailed: boolean;
+  /** edits rejected because the item was deleted on another device (delete wins) */
+  staleEdits: StaleEdit[];
+  /** keep the rejected edit by saving it as a NEW item */
+  restoreStaleEdit(id: string): void;
+  dismissStaleEdit(id: string): void;
   retrySync(): void;
   /** signed URL (1h, cached in memory) or local copy for an item's photo */
   resolvePhoto(item: Item): Promise<string | undefined>;
@@ -100,6 +105,13 @@ export function AppProvider({ userId, email, children }: { userId: string; email
     flushing.current = true; setSyncing(true);
     let failed = false;
     try {
+      // Remove objects of edits that were dropped (persisted list, so it also survives a restart).
+      const stale = allRef.current.sync.discard ?? [];
+      if (stale.length) {
+        await api.removePhotos(stale).then(() => {
+          setAll((a) => ({ ...a, sync: { ...a.sync, discard: (a.sync.discard ?? []).filter((p) => !stale.includes(p)) } }));
+        }).catch(() => {}); // still listed; retried on the next run
+      }
       for (const id of Object.keys(allRef.current.sync.pending)) {
         const op = allRef.current.sync.pending[id];
         const item = allRef.current.data.items.find((i) => i.id === id);
@@ -107,17 +119,18 @@ export function AppProvider({ userId, email, children }: { userId: string; email
         if (!alive.current || wiped.current) return;
         setAll((a) => {
           if (a.sync.pending[id] !== op) { rerun.current = true; return a; } // edited again while sending: run once more (idempotent)
-          const pending = { ...a.sync.pending };
-          if (!res.done) { pending[id] = res.op; return { ...a, sync: { ...a.sync, pending } }; }
-          delete pending[id];
-          const items = res.photoPath === undefined ? a.data.items : a.data.items.map((i) => (i.id === id ? { ...i, photoPath: res.photoPath ?? undefined } : i));
-          return { ...a, data: { ...a.data, items }, sync: { ...a.sync, pending } };
+          const s = applyFlushResult({ items: a.data.items, pending: a.sync.pending, conflicts: a.conflicts, discard: a.sync.discard ?? [] }, id, op, res, new Date().toISOString());
+          return { ...a, data: { ...a.data, items: s.items }, sync: { ...a.sync, pending: s.pending }, conflicts: s.conflicts };
         });
         if (!res.done) failed = true;
       }
       const { rows, cursor } = await pullAll(api, allRef.current.sync.cursor);
       if (!alive.current || wiped.current) return;
-      setAll((a) => ({ ...a, data: { ...a.data, items: mergeRemote(a.data.items, a.sync.pending, rows) }, sync: { ...a.sync, cursor } }));
+      setAll((a) => {
+        const s = applyPull({ items: a.data.items, pending: a.sync.pending, conflicts: a.conflicts, discard: a.sync.discard ?? [] }, rows, new Date().toISOString());
+        if (s.discard.length) rerun.current = true; // removed at the start of the next run
+        return { ...a, data: { ...a.data, items: s.items }, sync: { ...a.sync, pending: s.pending, cursor, discard: s.discard }, conflicts: s.conflicts };
+      });
       setOffline(false);
     } catch {
       failed = true; // could not reach the server
@@ -226,6 +239,12 @@ export function AppProvider({ userId, email, children }: { userId: string; email
       return { ...a, data: { ...a.data, items: a.data.items.filter((x) => x.id !== id) }, sync: { ...a.sync, pending: { ...a.sync.pending, [id]: planDelete(prev, a.sync.pending[id]) } } };
     }); },
     pendingIds, syncing, offline, localSaveFailed, resolvePhoto,
+    staleEdits: all.conflicts,
+    dismissStaleEdit: (id) => setAll((a) => ({ ...a, conflicts: a.conflicts.filter((c) => c.id !== id) })),
+    restoreStaleEdit: (id) => setAll((a) => {
+      const s = applyRestoreStale({ items: a.data.items, pending: a.sync.pending, conflicts: a.conflicts, discard: a.sync.discard ?? [] }, id, newUuid(), newUuid);
+      return { ...a, data: { ...a.data, items: s.items }, sync: { ...a.sync, pending: s.pending }, conflicts: s.conflicts };
+    }),
     retrySync: () => { flush(); },
     signOutAccount: async () => {
       wiped.current = true;

@@ -135,6 +135,21 @@ export interface SyncState {
   /** newest `updated_at` seen from the server */
   cursor?: string;
   pending: Record<string, SyncOp>;
+  /** uploaded objects that belong to an edit that can no longer be saved; removed best-effort, survives restarts */
+  discard?: string[];
+}
+
+/**
+ * An edit that could not be saved because the item was deleted on another device (delete wins).
+ * The user's edited copy is kept here until they save it as a new item or dismiss it.
+ */
+export interface StaleEdit {
+  /** id of the deleted item */
+  id: string;
+  /** the edited copy as the user left it */
+  item: Item;
+  /** ISO time the rejection was detected */
+  at: string;
 }
 
 /** Everything cached on this device for ONE signed-in account. */
@@ -144,4 +159,6 @@ export interface AppData {
   settings?: Settings;
   data: ModeData;
   sync: SyncState;
+  /** edits rejected because the item was deleted elsewhere; shown to the user until resolved */
+  conflicts: StaleEdit[];
 }

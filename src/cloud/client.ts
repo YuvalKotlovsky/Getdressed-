@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { cloudConfig } from './config';
-import type { CloudApi, RemoteRow } from './engine';
+import { ItemDeletedError, type CloudApi, type RemoteRow } from './engine';
 
 export const BUCKET = 'closet-photos';
 let client: SupabaseClient | null = null;
@@ -25,7 +25,11 @@ export function getSupabase(): SupabaseClient | null {
  * `user_id` is sent explicitly: a request still in flight after an account switch is rejected by RLS instead of landing in the new account.
  */
 export function supabaseApi(sb: SupabaseClient, userId: string): CloudApi {
-  const fail = (e: { message: string } | null) => { if (e) throw new Error(e.message); };
+  const fail = (e: { message: string } | null) => {
+    if (!e) return;
+    if (e.message.includes('item_deleted')) throw new ItemDeletedError();
+    throw new Error(e.message);
+  };
   return {
     async upsertItem(row) {
       const { error } = await sb.from('wardrobe_items').upsert({ id: row.id, user_id: userId, data: row.data, photo_path: row.photo_path, deleted_at: null }, { onConflict: 'id' });

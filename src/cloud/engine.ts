@@ -1,4 +1,4 @@
-import type { Item, SyncOp } from '../types';
+import type { Item, StaleEdit, SyncOp } from '../types';
 
 /**
  * Wardrobe sync engine. Pure logic over a small `CloudApi`, so it can be tested with an in-memory fake.
@@ -6,6 +6,11 @@ import type { Item, SyncOp } from '../types';
  * Contract (see supabase/migrations):
  *  - table wardrobe_items: id (client uuid), user_id (server: auth.uid()), data jsonb, photo_path, deleted_at, updated_at
  *  - private bucket closet-photos, object path `{user_id}/{item_id}/{photo_id}.jpg`
+ *
+ * Conflict rule (enforced by the database trigger `wardrobe_items_tombstone_terminal`):
+ *   DELETE WINS. Once an item has `deleted_at`, it can never be edited or restored; a later write from any device
+ *   is rejected with `item_deleted`. To bring such an item back, the user saves their copy as a NEW item (new id).
+ *   Between two live edits the last write still wins.
  *
  * Retry safety: ids are client-generated and writes are upserts; the photo path is fixed per attempt
  * (stored in the pending op), so repeating a failed save never creates a second item or a second object.
@@ -26,6 +31,13 @@ export interface CloudApi {
   removePhotos(paths: string[]): Promise<void>;
   signedUrl(path: string, ttlSeconds: number): Promise<string>;
 }
+
+/** The server refused a write because the item was deleted (by this or another device). */
+export class ItemDeletedError extends Error {
+  constructor() { super('item_deleted'); this.name = 'ItemDeletedError'; }
+}
+export const isItemDeleted = (e: unknown) =>
+  e instanceof ItemDeletedError || (e instanceof Error && /item_deleted/.test(e.message));
 
 export const PAGE = 500;
 export const PULL_OVERLAP_MS = 5000;
@@ -61,6 +73,8 @@ export function planDelete(prev: Item | undefined, prevOp: SyncOp | undefined): 
 
 export type FlushResult =
   | { done: true; photoPath?: string | null }
+  /** the item was deleted elsewhere: the edit is NOT saved; `discard` are uploaded objects that can be removed */
+  | { done: true; rejected: 'deleted'; discard: string[] }
   | { done: false; op: SyncOp };
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 200);
@@ -92,6 +106,11 @@ export async function flushOp(
     if (stale.length) await api.removePhotos(stale).catch(() => {});
     return { done: true, photoPath: path };
   } catch (e) {
+    if (op.kind === 'upsert' && isItemDeleted(e)) {
+      const discard = [cur.uploadedPath, ...(op.cleanup ?? [])].filter((x): x is string => !!x);
+      await api.removePhotos(discard).catch(() => {});
+      return { done: true, rejected: 'deleted', discard };
+    }
     return { done: false, op: { ...cur, attempts: cur.attempts + 1, lastError: msg(e) } };
   }
 }
@@ -125,4 +144,71 @@ export function mergeRemote(local: Item[], pending: Record<string, SyncOp>, rows
     else byId.set(r.id, remoteToItem(r, byId.get(r.id)));
   }
   return [...byId.values()];
+}
+
+/** The part of the local state that sync changes. */
+export interface SyncSlice {
+  items: Item[];
+  pending: Record<string, SyncOp>;
+  conflicts: StaleEdit[];
+  /** object paths waiting to be removed (persisted in SyncState.discard) */
+  discard: string[];
+}
+
+const addConflict = (list: StaleEdit[], c: StaleEdit) => [...list.filter((x) => x.id !== c.id), c];
+
+/** Apply the outcome of pushing one op. Pure, so both the app and the tests use the same rules. */
+export function applyFlushResult(s: SyncSlice, id: string, sent: SyncOp, res: FlushResult, now: string): SyncSlice {
+  if (s.pending[id] !== sent) return s; // edited again while sending: the newer op will run next
+  const pending = { ...s.pending };
+  if (!res.done) { pending[id] = res.op; return { ...s, pending }; }
+  delete pending[id];
+  if ('rejected' in res) {
+    const edited = s.items.find((i) => i.id === id);
+    return {
+      ...s,
+      items: s.items.filter((i) => i.id !== id),
+      pending,
+      conflicts: edited ? addConflict(s.conflicts, { id, item: edited, at: now }) : s.conflicts,
+    };
+  }
+  const items = res.photoPath === undefined ? s.items : s.items.map((i) => (i.id === id ? { ...i, photoPath: res.photoPath ?? undefined } : i));
+  return { ...s, items, pending };
+}
+
+/**
+ * Apply pulled rows. A remote tombstone for an item with an UNSENT local edit is a conflict: delete wins, the edit is
+ * kept in `conflicts` (not lost) and its pending op is dropped. `discard` lists uploaded objects of the dropped op.
+ */
+export function applyPull(s: SyncSlice, rows: RemoteRow[], now: string): SyncSlice {
+  let pending = s.pending;
+  let items = s.items;
+  let conflicts = s.conflicts;
+  const discard: string[] = [...s.discard];
+  for (const r of rows) {
+    const op = pending[r.id];
+    if (!r.deleted_at || !op || op.kind !== 'upsert') continue;
+    const edited = items.find((i) => i.id === r.id);
+    if (edited) conflicts = addConflict(conflicts, { id: r.id, item: edited, at: now });
+    items = items.filter((i) => i.id !== r.id);
+    discard.push(...[op.uploadedPath, ...(op.cleanup ?? [])].filter((x): x is string => !!x));
+    pending = { ...pending }; delete pending[r.id];
+  }
+  return { items: mergeRemote(items, pending, rows), pending, conflicts, discard: [...new Set(discard)] };
+}
+
+/**
+ * "Save as a new item": the rejected edit becomes a NEW item (new id, queued for upload); the deleted one stays deleted.
+ * Doing the lookup and removal in one pure step makes a double tap harmless (the second call finds nothing).
+ */
+export function applyRestoreStale(s: SyncSlice, id: string, newItemId: string, newPhotoId: () => string): SyncSlice {
+  const c = s.conflicts.find((x) => x.id === id);
+  if (!c) return s;
+  const fresh: Item = { ...c.item, id: newItemId, photoPath: undefined };
+  return {
+    ...s,
+    items: [...s.items, fresh],
+    conflicts: s.conflicts.filter((x) => x.id !== id),
+    pending: { ...s.pending, [fresh.id]: planSave(undefined, fresh, undefined, newPhotoId) },
+  };
 }

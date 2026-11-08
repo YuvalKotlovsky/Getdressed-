@@ -370,6 +370,40 @@ async function main(): Promise<void> {
     assert(data?.deleted_at, 'deleted_at not set');
   });
 
+  // -- delete wins: a stale edit from another client must not resurrect a deleted item ---------------
+  //    (needs migration 20261108000000_wardrobe_items_tombstone_terminal.sql)
+  await check('DELETE WINS: two clients load an item, one deletes, the other\'s stale edit is rejected and the item stays deleted', async () => {
+    const A2 = await signedIn(env('TEST_A_EMAIL'), env('TEST_A_PASSWORD'));
+    const itemC = randomUUID();
+    const ins = await A.sb.from(TABLE).insert({ id: itemC, data: { name: 'original' } });
+    assert(!ins.error, `setup insert failed: ${ins.error?.message}`);
+    createdRows.push({ sb: A.sb, id: itemC });
+    const seen = await A2.sb.from(TABLE).select('id,data').eq('id', itemC).single();
+    assert(seen.data?.id === itemC, 'client 2 could not load the item');
+    const del = await A.sb.from(TABLE).update({ deleted_at: new Date().toISOString() }).eq('id', itemC);
+    assert(!del.error, `delete failed: ${del.error?.message}`);
+
+    const hint = ' (apply migration 20261108000000_wardrobe_items_tombstone_terminal.sql to this project)';
+    const stale = await A2.sb.from(TABLE).upsert({ id: itemC, data: { name: 'stale edit' }, photo_path: null, deleted_at: null }, { onConflict: 'id' });
+    assert(stale.error && /item_deleted/.test(stale.error.message), `stale upsert was not rejected with item_deleted${hint}`);
+    const editOnly = await A2.sb.from(TABLE).update({ data: { name: 'stale edit 2' } }).eq('id', itemC);
+    assert(editOnly.error && /item_deleted/.test(editOnly.error.message), `stale data update was not rejected${hint}`);
+    const restore = await A2.sb.from(TABLE).update({ deleted_at: null }).eq('id', itemC);
+    assert(restore.error && /item_deleted/.test(restore.error.message), `clearing deleted_at was not rejected${hint}`);
+
+    for (const [who, sb] of [['client 1', A.sb], ['client 2', A2.sb]] as const) {
+      const r = await sb.from(TABLE).select('data,deleted_at').eq('id', itemC).single();
+      assert(r.data?.deleted_at, `${who}: item is no longer deleted`);
+      assert((r.data?.data as { name?: string })?.name === 'original', `${who}: stale edit changed the record`);
+    }
+    const before = (await A.sb.from(TABLE).select('deleted_at').eq('id', itemC).single()).data?.deleted_at;
+    const again = await A2.sb.from(TABLE).update({ deleted_at: new Date().toISOString() }).eq('id', itemC);
+    assert(!again.error, `repeating the delete failed: ${again.error?.message}`);
+    const after = (await A.sb.from(TABLE).select('deleted_at').eq('id', itemC).single()).data?.deleted_at;
+    assert(before === after, 'repeating the delete moved deleted_at');
+    await A2.sb.auth.signOut();
+  });
+
   // -- cleanup -------------------------------------------------------------------------------------
   console.log('\nCleaning up test data...');
   for (const { sb, path } of createdPaths) {

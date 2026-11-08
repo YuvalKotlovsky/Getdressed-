@@ -5,7 +5,7 @@ import { DEFAULT_CITY } from '../weather/weather';
 export const accountKey = (userId: string) => `wmw:v2:${userId}`;
 
 export const emptyAppData = (userId: string): AppData => ({
-  version: 2, userId, data: emptyModeData(), sync: { pending: {} },
+  version: 2, userId, data: emptyModeData(), sync: { pending: {} }, conflicts: [],
   settings: { cityId: DEFAULT_CITY, weatherOverride: {} },
 });
 
@@ -19,7 +19,8 @@ export function parseStored(raw: string | null, userId: string): AppData | null 
     return {
       ...d,
       data: { ...base.data, ...d.data },
-      sync: { cursor: d.sync?.cursor, pending: d.sync?.pending ?? {} },
+      sync: { cursor: d.sync?.cursor, pending: d.sync?.pending ?? {}, discard: d.sync?.discard ?? [] },
+      conflicts: Array.isArray(d.conflicts) ? d.conflicts : [],
       settings: { ...base.settings!, ...d.settings, weatherOverride: d.settings?.weatherOverride ?? {} },
     };
   } catch { return null; }
