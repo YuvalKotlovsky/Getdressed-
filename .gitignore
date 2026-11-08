@@ -20,3 +20,4 @@ GoogleService-Info.plist
 ios/
 android/
 .DS_Store
+supabase/.temp/
