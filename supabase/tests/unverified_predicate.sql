@@ -7,9 +7,10 @@
 -- user INSIDE the same transaction as a positive control (so a pass cannot be an accident of a broken setup).
 --
 -- HOW: replace the placeholder email below with your UNCONFIRMED test user's email (do not commit the real one),
--- paste into the SQL Editor of `wearmyweek-dev`, Run. Success = NOTICE 'UNVERIFIED PREDICATE CHECKS PASSED'.
--- The whole block is ONE statement/transaction: any failure rolls everything back, including the temporary
--- confirmation of the user. On success it removes its own rows/objects and restores the user to unconfirmed.
+-- paste into the SQL Editor of `wearmyweek-dev`, Run. Success = an ERROR whose text starts with
+-- 'UNVERIFIED PREDICATE CHECKS PASSED' (the intentional rollback). Any other error text = failure/INCONCLUSIVE.
+-- The whole block is ONE transaction that always ends in a rollback: no rows, no objects, and the user's
+-- confirmation state is unchanged afterwards (verify: email_confirmed_at is still null).
 -- Never run this against staging/production.
 
 do $$
@@ -90,13 +91,11 @@ begin
     raise exception 'CONTROL FAILED: a verified user cannot create a photo object (%), so the photo-insert denial above is not conclusive', sqlerrm;
   end;
 
-  -- ===== cleanup and restore =====
+  -- ===== always roll back =====
+  -- Nothing is deleted or restored by hand (no direct deletes from storage.objects, Storage protections stay untouched).
+  -- The block ends with an intentional exception, so Postgres rolls back EVERYTHING: the test rows, the test objects and
+  -- the temporary confirmation of the user. The user stays unconfirmed even if this script is interrupted.
   reset role;
-  set local storage.allow_delete_query = 'true'; -- newer Storage schemas block direct deletes from storage.objects otherwise
-  delete from storage.objects where bucket_id = 'closet-photos' and name in (obj, obj2);
-  delete from public.wardrobe_items where id in (item, item2);
-  update auth.users set email_confirmed_at = null where id = uid;
-
-  raise notice 'UNVERIFIED PREDICATE CHECKS PASSED (denied while unconfirmed, allowed after confirmation, user restored to unconfirmed)';
+  raise exception 'UNVERIFIED PREDICATE CHECKS PASSED (denied while unconfirmed, allowed after confirmation). This error is the intentional ROLLBACK: nothing was kept.';
 end
 $$;
