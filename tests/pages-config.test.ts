@@ -27,3 +27,6 @@ test('error messages never contain the key', () => {
   const k = jwt('service_role');
   assert.equal(v('staging', 'staging', URL_, k)!.includes(k), false);
 });
+test('rejects the development project for any published environment', () => {
+  assert.match(v('staging', 'staging', 'https://lenqqdflencoxgpcdlrg.supabase.co', jwt('anon'))!, /development/);
+});

@@ -1,5 +1,8 @@
 import { parseCloudConfig } from '../src/cloud/config';
 
+/** Project ref of `wearmyweek-dev` (public identifier, not a secret): a published web build must never point at it. */
+const DEV_PROJECT_REF = 'lenqqdflencoxgpcdlrg';
+
 /** Configuration safeguard for the web build (not a substitute for authorization). Returns an error message or null. Never echoes values. */
 export function validatePagesConfig(target: string, appEnv?: string, url?: string, key?: string): string | null {
   if (!appEnv) return 'APP_ENV is not set on the GitHub Environment.';
@@ -7,6 +10,7 @@ export function validatePagesConfig(target: string, appEnv?: string, url?: strin
   const c = parseCloudConfig(url, key);
   if (!c.ok) return c.reason === 'secret-key' ? 'SUPABASE_ANON_KEY is a secret/service-role key. Use the public anon/publishable key.' : `SUPABASE_URL / SUPABASE_ANON_KEY invalid (${c.reason}).`;
   if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/.test(c.url)) return 'SUPABASE_URL must look like https://<project-ref>.supabase.co.';
+  if (c.url.includes(DEV_PROJECT_REF)) return 'SUPABASE_URL points at the development project; a published web build must never use it.';
   const k = c.anonKey;
   if (k.startsWith('eyJ')) {
     let role: string | undefined;
