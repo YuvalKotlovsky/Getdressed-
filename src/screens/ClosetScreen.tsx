@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { theme } from '../theme';
 import { categoryLabel } from '../i18n';
 import { rowDir, text } from '../ui';
@@ -9,13 +9,13 @@ import { ItemEditor, type EditorInitial } from '../components/ItemEditor';
 import { AddItemSheet, type AddKind } from '../components/AddItemSheet';
 import { LinkImport } from '../components/LinkImport';
 import { ReceiptImport } from '../components/ReceiptImport';
-import { ModeBar } from '../components/ModeBar';
+import { AccountBar } from '../components/AccountBar';
 import { Chip } from '../components/Chip';
 import { Btn } from '../components/Btn';
 import type { Category, Item } from '../types';
 
 export function ClosetScreen() {
-  const { data, mode, resetDemo, saveItem } = useApp();
+  const { data, saveItem, pendingIds } = useApp();
   const [filter, setFilter] = useState<Category | 'all'>('all');
   const [editing, setEditing] = useState<Item | null>(null);
   const [open, setOpen] = useState(false);
@@ -31,7 +31,7 @@ export function ClosetScreen() {
   return (
     <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
       <Text style={[text(28, '700'), { marginBottom: 14 }]}>הארון שלי</Text>
-      <ModeBar />
+      <AccountBar />
       <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
         <Chip label="הכל" on={filter === 'all'} onPress={() => setFilter('all')} />
         {(Object.keys(categoryLabel) as Category[]).map((c) => <Chip key={c} label={categoryLabel[c]} on={filter === c} onPress={() => setFilter(c)} />)}
@@ -42,14 +42,14 @@ export function ClosetScreen() {
 
       {items.length === 0 && (
         <Text style={[text(16, '400', theme.muted), { marginVertical: 30, textAlign: 'center' }]}>
-          {mode === 'mine' ? 'הארון ריק. הוסיפו פריט ראשון מהגלריה.' : 'אין פריטים בקטגוריה הזו.'}
+          {data.items.length === 0 ? 'הארון ריק. הוסיפו פריט ראשון מהגלריה.' : 'אין פריטים בקטגוריה הזו.'}
         </Text>
       )}
       <View style={{ flexDirection: rowDir, flexWrap: 'wrap', gap: 16 }}>
         {items.map((it) => (
           <View key={it.id}>
             <Pressable onPress={() => { setEditing(it); setInitial(null); setOpen(true); }}>
-              <ItemTile item={it} size={size} />
+              <ItemTile item={it} size={size} unsynced={pendingIds.includes(it.id)} />
             </Pressable>
             <Pressable onPress={() => saveItem({ ...it, available: !it.available })} style={{ marginTop: 4 }}>
               <Text style={text(12, '600', it.available ? theme.muted : theme.ok)}>{it.available ? 'סימון כלא זמין' : 'החזרה לזמין'}</Text>
@@ -58,11 +58,6 @@ export function ClosetScreen() {
         ))}
       </View>
 
-      {mode === 'demo' && (
-        <Pressable onPress={() => Alert.alert('איפוס ארון ההדגמה', 'להחזיר את ארון ההדגמה למצבו המקורי?', [{ text: 'ביטול' }, { text: 'איפוס', onPress: resetDemo }])} style={{ marginTop: 30 }}>
-          <Text style={text(14, '600', theme.muted)}>איפוס ארון ההדגמה</Text>
-        </Pressable>
-      )}
       <ItemEditor item={editing} initial={initial} visible={open} onClose={() => { setOpen(false); setInitial(null); }} />
       <AddItemSheet visible={sheet} onClose={() => setSheet(false)} onPick={pick} />
       <LinkImport visible={flow === 'link'} onClose={() => setFlow(null)} onDone={(i) => { setFlow(null); setEditing(null); setInitial(i); setOpen(true); }} />

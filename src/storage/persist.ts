@@ -3,29 +3,46 @@ import { Platform } from 'react-native';
 import { File, Paths } from 'expo-file-system';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import type { AppData } from '../types';
-import { demoModeData, emptyModeData } from '../data/demo';
-import { DEFAULT_CITY } from '../weather/weather';
 
-const KEY = 'wmw:v1';
+import { emptyAppData, parseStored } from '../cloud/scope';
+import { createCache } from './cache';
 
-export const freshData = (): AppData => ({
-  version: 1, mode: 'demo', demo: demoModeData(), mine: emptyModeData(),
-  settings: { cityId: DEFAULT_CITY, weatherOverride: {} },
-});
+const cache = createCache(AsyncStorage);
 
-export async function loadData(): Promise<AppData> {
+/**
+ * Local cache for ONE account (`wmw:v2:<user id>`). The old browser/demo blob `wmw:v1` is never read,
+ * imported or deleted: a new account always starts empty.
+ */
+export async function loadData(userId: string): Promise<AppData> {
   try {
-    const s = await AsyncStorage.getItem(KEY);
-    if (s) {
-      const d = JSON.parse(s) as AppData;
-      if (d?.version === 1) return { ...d, settings: { ...d.settings, cityId: d.settings?.cityId ?? DEFAULT_CITY, weatherOverride: d.settings?.weatherOverride ?? {} } };
-    }
+    const s = await cache.read(userId);
+    const d = parseStored(s, userId);
+    if (d) return d;
   } catch {}
-  return freshData();
+  return emptyAppData(userId);
 }
 
-export async function saveData(d: AppData): Promise<void> {
-  try { await AsyncStorage.setItem(KEY, JSON.stringify(d)); } catch {}
+/** Returns false when the device could not store the data (full disk, blocked storage). */
+export async function saveData(d: AppData): Promise<boolean> {
+  return cache.save(d);
+}
+
+/** Sign-out on a shared device: drop this account's cache and the photo copies it references. */
+export async function clearAccountCache(d: AppData): Promise<void> {
+  await cache.clear(d.userId);
+  if (Platform.OS === 'web') return;
+  // photos of live items AND of rejected edits (conflicts) that still point at local files
+  for (const it of [...d.data.items, ...d.conflicts.map((c) => c.item)]) {
+    if (!it.photoUri || !it.photoUri.startsWith('file:')) continue;
+    try { new File(it.photoUri).delete(); } catch {}
+  }
+}
+
+/** Raw bytes of a stored photo (file:// on device, data: URI on web) for upload. */
+export async function readPhotoBytes(uri: string): Promise<ArrayBuffer> {
+  const r = await fetch(uri);
+  if (!r.ok && Platform.OS !== 'web') throw new Error(`photo read failed (${r.status})`);
+  return r.arrayBuffer();
 }
 
 export interface PreparedPhoto {

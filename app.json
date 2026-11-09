@@ -13,7 +13,6 @@
     },
     "android": {
       "package": "app.wearmyweek.dev",
-      "supportsRtl": true,
       "adaptiveIcon": {
         "backgroundColor": "#FAF6EF",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -30,8 +29,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "הגישה לגלריה משמשת להוספת בגדים לארון שלכם. התמונות נשארות במכשיר.",
-          "cameraPermission": "המצלמה משמשת לצילום בגדים להוספה לארון."
+          "photosPermission": "הגישה לגלריה משמשת להוספת בגדים לארון שלכם. תמונות שתשמרו בארון מסונכרנות לאחסון ענן פרטי בחשבון שלכם. ניתוח אוטומטי של תמונה נשלח רק באישור נפרד.",
+          "cameraPermission": "המצלמה משמשת לצילום בגדים להוספה לארון. תמונה שתשמרו מסונכרנת לאחסון ענן פרטי בחשבון שלכם."
         }
       ],
       [

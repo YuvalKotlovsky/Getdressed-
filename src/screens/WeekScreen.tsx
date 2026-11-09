@@ -8,13 +8,13 @@ import { useApp } from '../state/AppContext';
 import { OutfitCard } from '../components/OutfitCard';
 import { Btn } from '../components/Btn';
 import { Icon } from '../components/Icon';
-import { ModeBar } from '../components/ModeBar';
+import { AccountBar } from '../components/AccountBar';
 import { ItemTile } from '../components/ItemTile';
 import { WeatherLine } from '../components/WeatherLine';
 import { AddEventModal } from '../components/AddEventModal';
 
 export function WeekScreen() {
-  const { week, refresh, refreshing, mode } = useApp();
+  const { week, refresh, refreshing } = useApp();
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState<Date | null>(null);
   const base = startOfDay(new Date());
@@ -22,7 +22,7 @@ export function WeekScreen() {
     <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}>
       <Text style={[text(28, '700'), { marginBottom: 16 }]}>השבוע</Text>
-      <ModeBar />
+      <AccountBar />
       {week.map((day, i) => {
         const date = addDays(base, i);
         const isOpen = open === day.dateKey;
@@ -54,7 +54,7 @@ export function WeekScreen() {
               <View style={{ marginTop: 12 }}>
                 <WeatherLine dKey={day.dateKey} />
                 {day.entries.map((e) => <OutfitCard key={e.key} dKey={day.dateKey} entry={e} isToday={i === 0} />)}
-                {mode === 'mine' && <View style={{ flexDirection: 'row' }}><Btn label="הוספת אירוע" kind="ghost" onPress={() => setAdding(date)} /></View>}
+                <View style={{ flexDirection: 'row' }}><Btn label="הוספת אירוע" kind="ghost" onPress={() => setAdding(date)} /></View>
               </View>
             )}
           </View>

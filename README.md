@@ -2,4 +2,4 @@
 
 Expo + React Native + TypeScript. Hebrew/RTL. See [CLAUDE.md](CLAUDE.md) for the product goal, commands and next milestone.
 
-First version uses a **demo closet and demo calendar** (clearly labelled in the app). Switch to "הארון שלי" for your own closet, stored only on the device.
+The app requires a registered, email-verified account (Supabase). A new account starts with an empty closet; items and photos sync across your devices. See CLAUDE.md for setup.

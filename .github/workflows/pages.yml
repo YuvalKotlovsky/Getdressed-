@@ -1,45 +1,60 @@
-# Web preview you can open from a phone browser. One-time setup: repo Settings > Pages > Source: "GitHub Actions".
-# NOTE: GitHub Pages on a PRIVATE repo needs a paid GitHub plan, and the published site itself is publicly reachable.
+# Web preview. MANUAL deployment only (Actions > Web preview > Run workflow).
+#
+# - Pick the target GitHub Environment (staging or production). Its variables configure the build:
+#     APP_ENV            must equal the selected environment (staging | production)
+#     SUPABASE_URL       https://<ref>.supabase.co  (that environment's own Supabase project)
+#     SUPABASE_ANON_KEY  public anon/publishable key of that project (never a service-role/secret key)
+#   Define them as variables of the GitHub Environment itself. Do NOT define APP_ENV / SUPABASE_URL / SUPABASE_ANON_KEY as
+#   repo-level variables (GitHub would use them when an environment lacks its own); delete any old repo-level copies.
+#   This workflow has no dev fallback: a missing or inconsistent value fails the run before anything is built.
+# - Recognition is NOT enabled: EXPO_PUBLIC_RECOGNITION_URL is deliberately not set until the backend
+#   authenticates requests and enforces per-user quotas.
+# - One-time setup: repo Settings > Pages > Source: "GitHub Actions". On a PRIVATE repo Pages needs a paid plan,
+#   and the published site is publicly reachable.
+# - Changing this workflow does NOT unpublish a site that an earlier run already deployed. That site stays live
+#   until removed (Settings > Pages > "Unpublish site", or delete the github-pages deployment).
+# - Record every deployment: environment, source SHA, and this run's id (see CLAUDE.md, "Git and environments workflow").
 name: Web preview
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment that holds this build's configuration
+        type: choice
+        options: [staging, production]
+        required: true
 permissions:
   contents: read
-  pages: write
-  id-token: write
-concurrency: { group: pages, cancel-in-progress: true }
+concurrency: { group: pages, cancel-in-progress: false }
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment: { name: github-pages, url: '${{ steps.d.outputs.page_url }}' }
+    environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with: { node-version-file: .nvmrc, cache: npm }
       - run: npm ci
-      - name: Check recognition server setting
+      - name: Validate environment configuration
         env:
-          URL: ${{ vars.RECOGNITION_URL }}
+          TARGET: ${{ inputs.environment }}
+          APP_ENV: ${{ vars.APP_ENV }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
         run: |
-          if [ -z "$URL" ]; then
-            echo "::warning title=Recognition server not configured::Repository variable RECOGNITION_URL is empty, so the deployed app cannot analyze photos (manual tagging only)."
-            echo "### Recognition server NOT configured" >> "$GITHUB_STEP_SUMMARY"
-            echo "Set Settings > Secrets and variables > Actions > Variables > RECOGNITION_URL to the https URL of the server, then re-run this workflow." >> "$GITHUB_STEP_SUMMARY"
-          elif [[ "$URL" != https://* ]]; then
-            echo "::error title=RECOGNITION_URL must start with https://::The Pages site is https, so the browser blocks http servers."
-            exit 1
-          else
-            echo "Recognition server configured: $URL"
-            echo "### Recognition server configured: $URL" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          npx tsx scripts/pages-config.ts
+          {
+            echo "### Web preview build"
+            echo "- environment: $TARGET"
+            echo "- source SHA: $GITHUB_SHA"
+            echo "- run id: $GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
       - run: npx expo export --platform web
         env:
           CI: '1'
           EXPO_BASE_URL: '/${{ github.event.repository.name }}'
-          # optional: public URL of the recognition server (repo Settings > Variables > Actions > RECOGNITION_URL)
-          EXPO_PUBLIC_RECOGNITION_URL: ${{ vars.RECOGNITION_URL }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
       - name: Verify sub-path build and add Pages helpers
         run: |
           grep -q '/${{ github.event.repository.name }}/_expo/' dist/index.html
@@ -47,5 +62,14 @@ jobs:
           cp dist/index.html dist/404.html
       - uses: actions/upload-pages-artifact@v3
         with: { path: dist }
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment: { name: github-pages, url: '${{ steps.d.outputs.page_url }}' }
+    steps:
       - id: d
         uses: actions/deploy-pages@v4

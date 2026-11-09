@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, Image, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { newUuid } from '../cloud/uuid';
+import { useItemPhoto } from '../cloud/useItemPhoto';
 import { COLORS, theme } from '../theme';
 import { SUBTYPES, categoryLabel, dressinessLabel, occasionLabel, partLabel, weatherLabel } from '../i18n';
 import { cardStyle, rowDir, text } from '../ui';
@@ -19,7 +21,7 @@ const WEATHERS: Weather[] = ['hot', 'mild', 'cold'];
 
 /** What the form edits. A NEW item starts with nothing chosen: unrecognized fields stay empty until the user fills them. */
 type Draft = Omit<Item, 'category' | 'part' | 'color' | 'dressiness'> & { category?: Category; part?: Part; color?: string; dressiness?: Dressiness };
-const blank = (): Draft => ({ id: `u-${Date.now()}`, name: '', available: true, occasions: [] });
+const blank = (): Draft => ({ id: newUuid(), name: '', available: true, occasions: [] });
 
 type Phase = 'none' | 'consent' | 'running' | 'done' | 'failed';
 const FIELD_LABEL: Record<TagField, string> = { category: 'קטגוריה', subtype: 'סוג הבגד', color: 'צבע', occasions: 'אירועים', dressiness: 'רמת רשמיות', weather: 'מזג אוויר' };
@@ -52,6 +54,7 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
   const [multiple, setMultiple] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const isNew = !item;
+  const shownPhoto = useItemPhoto(it);
 
   useEffect(() => {
     if (!visible) return;
@@ -155,13 +158,13 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
 
           <View style={{ alignItems: 'center', marginVertical: 16 }}>
             <View style={{ width: 200, height: 250, borderRadius: 14, backgroundColor: theme.accentSoft, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.line }}>
-              {it.photoUri ? <Image source={{ uri: it.photoUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : <Text style={text(14, '400', theme.muted)}>ללא תמונה</Text>}
+              {shownPhoto ? <Image source={{ uri: shownPhoto }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : <Text style={text(14, '400', theme.muted)}>ללא תמונה</Text>}
             </View>
             <View style={{ flexDirection: rowDir, gap: 10, marginTop: 12, width: '100%' }}>
               <Btn label="מהגלריה" kind="ghost" onPress={() => pick(false)} />
               <Btn label="צילום" kind="ghost" onPress={() => pick(true)} />
             </View>
-            <Text style={[text(12, '400', theme.muted), { marginTop: 8 }]}>התמונה נשמרת במכשיר בלבד. בגד אחד בכל תמונה, ובצילום מסך נזהה את הפריט הראשי שבחזית.</Text>
+            <Text style={[text(12, '400', theme.muted), { marginTop: 8 }]}>התמונה נשמרת במכשיר ומסונכרנת לאחסון ענן פרטי בחשבון שלכם (רק אתם יכולים לראות אותה). בגד אחד בכל תמונה, ובצילום מסך נזהה את הפריט הראשי שבחזית.</Text>
           </View>
 
           {isNew && status !== 'ready' && status !== 'checking' && (
@@ -181,7 +184,7 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
             <View style={[cardStyle, { padding: 14, marginBottom: 8 }]}>
               <Text style={text(15, '700')}>ניתוח אוטומטי של התמונה</Text>
               <Text style={[text(13, '400', theme.muted), { marginTop: 6 }]}>
-                אם תאשרו, התמונה שבחרתם (מוקטנת) תישלח לשרת הזיהוי של האפליקציה, שמעביר אותה לשירות בינה מלאכותית כדי להציע תגיות. לא נשלחים שם, מיקום או נתונים אחרים, והתמונה לא נשמרת בשרת. בלי אישור לא נשלח דבר ואפשר לתייג ידנית.
+                אם תאשרו, התמונה שבחרתם (מוקטנת) תישלח לשרת הזיהוי של האפליקציה, שמעביר אותה לשירות בינה מלאכותית כדי להציע תגיות. לא נשלחים שם, מיקום או נתונים אחרים, והתמונה לא נשמרת בשרת. האישור הזה נפרד משמירת הארון בענן, ובלעדיו לא נשלח דבר לניתוח ואפשר לתייג ידנית.
               </Text>
               <View style={{ flexDirection: rowDir, gap: 10, marginTop: 12 }}>
                 <Btn label="דילוג, תיוג ידני" kind="ghost" onPress={() => setPhase('none')} />

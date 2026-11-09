@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildWeek } from '../src/logic/week';
-import { DemoCalendarProvider } from '../src/calendar/provider';
-import { demoModeData } from '../src/data/demo';
+import { DemoCalendarProvider } from './fixtures/demo';
+import { demoModeData } from './fixtures/demo';
 import { planDay, choiceKey } from '../src/logic/recommend';
 import { dateKey } from '../src/logic/dates';
 import { CITIES, bandOf, cityById, makeWeatherSource, parseOpenMeteo, seasonalTemp, fetchForecast } from '../src/weather/weather';

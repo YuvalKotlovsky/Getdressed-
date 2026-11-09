@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { newUuid } from '../cloud/uuid';
 import { COLORS, theme } from '../theme';
 import { categoryLabel } from '../i18n';
 import { cardStyle, rowDir, text } from '../ui';
@@ -117,7 +118,7 @@ export function ReceiptImport({ visible, onClose }: { visible: boolean; onClose:
       const cat: Category = r.category ?? 'top';
       const d = defaultsFor(cat);
       const item: Item = {
-        id: `r-${Date.now()}-${n}`, name: r.name.trim() || r.line.description || 'פריט מקבלה', category: cat, part: r.match.suggestion.part ?? d.part,
+        id: newUuid(), name: r.name.trim() || r.line.description || 'פריט מקבלה', category: cat, part: r.match.suggestion.part ?? d.part,
         subtype: r.match.suggestion.subtype, color: r.color ?? 'white', dressiness: d.dressiness, occasions: d.occasions, available: true, photoUri,
         // only the item's own origin is kept; the receipt text, prices and totals are discarded
         source: { store: store ?? storeFromUrl(r.link), url: r.link || undefined, reference: r.line.reference },

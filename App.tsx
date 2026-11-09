@@ -3,6 +3,8 @@ import { I18nManager, Pressable, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { AppProvider, useApp } from './src/state/AppContext';
+import { AuthProvider, useAuth } from './src/auth/AuthContext';
+import { AuthScreen } from './src/screens/AuthScreen';
 import { TodayScreen } from './src/screens/TodayScreen';
 import { WeekScreen } from './src/screens/WeekScreen';
 import { ClosetScreen } from './src/screens/ClosetScreen';
@@ -41,13 +43,24 @@ function Shell() {
   );
 }
 
+/** Nothing but the sign-in screen renders until a verified account exists. The provider is keyed by user id, so switching accounts drops all in-memory data. */
+function Gate() {
+  const { status, user } = useAuth();
+  if (status !== 'signedIn' || !user) return <AuthScreen />;
+  return (
+    <AppProvider key={user.id} userId={user.id} email={user.email ?? ''}>
+      <Shell />
+    </AppProvider>
+  );
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AppProvider>
-        <StatusBar style="dark" />
-        <Shell />
-      </AppProvider>
+      <StatusBar style="dark" />
+      <AuthProvider>
+        <Gate />
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }
