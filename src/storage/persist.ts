@@ -4,7 +4,10 @@ import { File, Paths } from 'expo-file-system';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import type { AppData } from '../types';
 
-import { accountKey, emptyAppData, parseStored } from '../cloud/scope';
+import { emptyAppData, parseStored } from '../cloud/scope';
+import { createCache } from './cache';
+
+const cache = createCache(AsyncStorage);
 
 /**
  * Local cache for ONE account (`wmw:v2:<user id>`). The old browser/demo blob `wmw:v1` is never read,
@@ -12,7 +15,7 @@ import { accountKey, emptyAppData, parseStored } from '../cloud/scope';
  */
 export async function loadData(userId: string): Promise<AppData> {
   try {
-    const s = await AsyncStorage.getItem(accountKey(userId));
+    const s = await cache.read(userId);
     const d = parseStored(s, userId);
     if (d) return d;
   } catch {}
@@ -21,14 +24,15 @@ export async function loadData(userId: string): Promise<AppData> {
 
 /** Returns false when the device could not store the data (full disk, blocked storage). */
 export async function saveData(d: AppData): Promise<boolean> {
-  try { await AsyncStorage.setItem(accountKey(d.userId), JSON.stringify(d)); return true; } catch { return false; }
+  return cache.save(d);
 }
 
 /** Sign-out on a shared device: drop this account's cache and the photo copies it references. */
 export async function clearAccountCache(d: AppData): Promise<void> {
-  try { await AsyncStorage.removeItem(accountKey(d.userId)); } catch {}
+  await cache.clear(d.userId);
   if (Platform.OS === 'web') return;
-  for (const it of d.data.items) {
+  // photos of live items AND of rejected edits (conflicts) that still point at local files
+  for (const it of [...d.data.items, ...d.conflicts.map((c) => c.item)]) {
     if (!it.photoUri || !it.photoUri.startsWith('file:')) continue;
     try { new File(it.photoUri).delete(); } catch {}
   }

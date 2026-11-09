@@ -404,6 +404,41 @@ async function main(): Promise<void> {
     await A2.sb.auth.signOut();
   });
 
+  // -- identity is immutable: renaming a tombstone's id must fail, and a stale write with the ORIGINAL id must not resurrect it --
+  //    (needs migration 20261110000000_wardrobe_items_identity_immutable.sql)
+  await check('IDENTITY: deleted item cannot be re-id\'d, user_id cannot change, a stale write with the original id stays rejected', async () => {
+    const hint = ' (apply migration 20261110000000_wardrobe_items_identity_immutable.sql to this project)';
+    const A2 = await signedIn(env('TEST_A_EMAIL'), env('TEST_A_PASSWORD'));
+    const itemD = randomUUID();
+    const ins = await A.sb.from(TABLE).insert({ id: itemD, data: { name: 'original' } });
+    assert(!ins.error, `setup insert failed: ${ins.error?.message}`);
+    createdRows.push({ sb: A.sb, id: itemD });
+    const del = await A.sb.from(TABLE).update({ deleted_at: new Date().toISOString() }).eq('id', itemD);
+    assert(!del.error, `delete failed: ${del.error?.message}`);
+
+    const newId = randomUUID();
+    const rename = await A.sb.from(TABLE).update({ id: newId }).eq('id', itemD);
+    assert(rename.error && /cannot be changed/.test(rename.error.message), `renaming the id was not rejected${hint}`);
+    const live = await A.sb.from(TABLE).select('id').eq('id', newId);
+    assert((live.data ?? []).length === 0, 'a row with the new id exists');
+    const reown = await A.sb.from(TABLE).update({ user_id: B.id }).eq('id', itemD);
+    assert(reown.error, 'changing user_id was not rejected');
+
+    const stale = await A2.sb.from(TABLE).upsert({ id: itemD, data: { name: 'stale write' }, photo_path: null, deleted_at: null }, { onConflict: 'id' });
+    assert(stale.error && /item_deleted/.test(stale.error.message), `stale write with the original id was not rejected${hint}`);
+    const r = await A.sb.from(TABLE).select('data,deleted_at').eq('id', itemD).single();
+    assert(r.data?.deleted_at && (r.data.data as { name?: string }).name === 'original', 'the original item is no longer deleted/unchanged');
+
+    // normal edit of a LIVE item keeps working (same id)
+    const itemE = randomUUID();
+    const i2 = await A.sb.from(TABLE).insert({ id: itemE, data: { name: 'e1' } });
+    assert(!i2.error, `setup insert failed: ${i2.error?.message}`);
+    createdRows.push({ sb: A.sb, id: itemE });
+    const up = await A2.sb.from(TABLE).upsert({ id: itemE, data: { name: 'e2' }, photo_path: null, deleted_at: null }, { onConflict: 'id' });
+    assert(!up.error, `idempotent upsert of a live item failed: ${up.error?.message}`);
+    await A2.sb.auth.signOut();
+  });
+
   // -- cleanup -------------------------------------------------------------------------------------
   console.log('\nCleaning up test data...');
   for (const { sb, path } of createdPaths) {

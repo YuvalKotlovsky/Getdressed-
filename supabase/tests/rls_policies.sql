@@ -170,7 +170,8 @@ begin
       'wardrobe_items_set_updated_at_ins',
       'wardrobe_items_set_updated_at_upd',
       'wardrobe_items_lock_user_id',
-      'wardrobe_items_tombstone_terminal'
+      'wardrobe_items_tombstone_terminal',
+      'wardrobe_items_identity_immutable'
     ]) as x(name)
   loop
     if not exists (

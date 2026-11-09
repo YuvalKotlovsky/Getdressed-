@@ -31,6 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc, cache: npm }
+      - run: npm ci
       - name: Validate environment configuration
         env:
           TARGET: ${{ inputs.environment }}
@@ -38,24 +42,13 @@ jobs:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
         run: |
-          fail() { echo "::error title=Invalid '$TARGET' environment configuration::$1"; exit 1; }
-          [ -n "$APP_ENV" ] || fail "Variable APP_ENV is not set on the GitHub Environment '$TARGET'."
-          [ "$APP_ENV" = "$TARGET" ] || fail "APP_ENV is '$APP_ENV' but the selected environment is '$TARGET'. Refusing to build."
-          [ -n "$SUPABASE_URL" ] || fail "Variable SUPABASE_URL is not set on the GitHub Environment '$TARGET'."
-          [ -n "$SUPABASE_ANON_KEY" ] || fail "Variable SUPABASE_ANON_KEY is not set on the GitHub Environment '$TARGET'."
-          [[ "$SUPABASE_URL" =~ ^https://[a-z0-9]+\.supabase\.co/?$ ]] || fail "SUPABASE_URL must look like https://<project-ref>.supabase.co."
-          case "$SUPABASE_ANON_KEY" in sb_secret_*) fail "SUPABASE_ANON_KEY is a secret key. Use the public anon/publishable key.";; esac
-          echo "Environment '$TARGET' configuration is present."
+          npx tsx scripts/pages-config.ts
           {
             echo "### Web preview build"
             echo "- environment: $TARGET"
             echo "- source SHA: $GITHUB_SHA"
             echo "- run id: $GITHUB_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version-file: .nvmrc, cache: npm }
-      - run: npm ci
       - run: npx expo export --platform web
         env:
           CI: '1'
