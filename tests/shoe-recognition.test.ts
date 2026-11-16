@@ -76,7 +76,7 @@ test('health check tells the app why recognition is unavailable', async () => {
 
 test('GET /health reports whether the server has an API key', async () => {
   for (const [key, expected] of [['sk', true], [undefined, false]] as const) {
-    const srv = createServer({ apiKey: key });
+    const srv = createServer({ apiKey: key, legacyUnauthenticated: true });
     srv.listen(0);
     await once(srv, 'listening');
     const port = (srv.address() as AddressInfo).port;

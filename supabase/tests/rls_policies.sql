@@ -184,6 +184,19 @@ begin
     end if;
   end loop;
 
+  -- 8. AI quota table and function (migration 20261116000000).
+  if not exists (select 1 from pg_class where oid = 'public.ai_usage'::regclass and relrowsecurity and relforcerowsecurity) then
+    raise exception 'RLS CHECK FAILED: public.ai_usage must have forced RLS';
+  end if;
+  if has_table_privilege('anon', 'public.ai_usage', 'select,insert,update,delete')
+     or has_table_privilege('authenticated', 'public.ai_usage', 'insert,update,delete') then
+    raise exception 'RLS CHECK FAILED: ai_usage grants are too broad (only select for authenticated)';
+  end if;
+  if not has_function_privilege('authenticated', 'public.consume_ai_quota(text,integer,integer,integer)', 'execute')
+     or has_function_privilege('anon', 'public.consume_ai_quota(text,integer,integer,integer)', 'execute') then
+    raise exception 'RLS CHECK FAILED: consume_ai_quota must be executable by authenticated only';
+  end if;
+
   raise notice 'ALL RLS CATALOG CHECKS PASSED';
 end
 $$;

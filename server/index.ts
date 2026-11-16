@@ -7,6 +7,10 @@ import http from 'node:http';
 import { RECOGNITION_PROMPT, extractJson, normalizeRecognition } from '../src/tagging/schema';
 import { RECEIPT_PROMPT, normalizeReceipt } from '../src/import/receiptSchema';
 import { fetchProduct } from './product';
+import { analyzePhoto, MAX_BODY_BYTES, supabasePhotos, type AnalysisDeps } from './photoAnalysis';
+import { geminiProvider } from './gemini';
+import { DEFAULT_LIMITS, supabaseQuota } from './quota';
+import { parseCloudConfig } from '../src/cloud/config';
 
 const MAX_BODY = 4 * 1024 * 1024;
 const MEDIA = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -66,7 +70,15 @@ export async function product(body: any, env: AnalyzeEnv & { transport?: any; lo
   return { status: r.status === 'invalid_url' ? 400 : 200, json: r };
 }
 
-export function createServer(env: AnalyzeEnv & { allowedOrigin?: string; token?: string; perHour?: number }) {
+export interface ServerEnv extends AnalyzeEnv {
+  allowedOrigin?: string; token?: string; perHour?: number;
+  /** authenticated photo analysis (Supabase session + quotas + Gemini). This is the ONLY route meant for real users. */
+  analysis?: AnalysisDeps;
+  /** the old unauthenticated /analyze, /receipt, /product routes. OFF unless explicitly enabled (local experiments only). */
+  legacyUnauthenticated?: boolean;
+}
+
+export function createServer(env: ServerEnv) {
   const hits = new Map<string, number[]>();
   return http.createServer(async (req, res) => {
     const origin = env.allowedOrigin ?? '*';
@@ -75,35 +87,49 @@ export function createServer(env: AnalyzeEnv & { allowedOrigin?: string; token?:
       res.end(JSON.stringify(json));
     };
     if (req.method === 'OPTIONS') return send(204, {});
-    if (req.method === 'GET' && req.url === '/health') return send(200, { ok: true, recognition: !!env.apiKey });
-    const route = req.url === '/analyze' ? analyze : req.url === '/receipt' ? analyzeReceipt : req.url === '/product' ? product : null;
-    if (req.method !== 'POST' || !route) return send(404, { error: 'not_found' });
-    if (env.token && req.headers.authorization !== `Bearer ${env.token}`) return send(401, { error: 'unauthorized' });
+    if (req.method === 'GET' && req.url === '/health') return send(200, { ok: true, recognition: !!env.analysis?.provider || (!!env.legacyUnauthenticated && !!env.apiKey), authenticated: !!env.analysis });
+    const legacy = env.legacyUnauthenticated ? (req.url === '/analyze' ? analyze : req.url === '/receipt' ? analyzeReceipt : req.url === '/product' ? product : null) : null;
+    const isV1 = req.url === '/v1/analyze-photo' && !!env.analysis;
+    if (req.method !== 'POST' || (!legacy && !isV1)) return send(404, { error: 'not_found' });
+    if (legacy && env.token && req.headers.authorization !== `Bearer ${env.token}`) return send(401, { error: 'unauthorized' });
     const ip = String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '');
     const now = Date.now();
     const recent = (hits.get(ip) ?? []).filter((t) => now - t < 3600_000);
-    if (recent.length >= (env.perHour ?? 30)) return send(429, { error: 'rate_limited' });
+    if (recent.length >= (env.perHour ?? (isV1 ? 120 : 30))) return send(429, { error: 'rate_limited' });
     hits.set(ip, [...recent, now]);
+    const limit = isV1 ? MAX_BODY_BYTES : MAX_BODY;
+    if (Number(req.headers['content-length'] ?? 0) > limit) { res.setHeader('connection', 'close'); return send(413, { error: 'too_large' }); } // rejected before reading
     let size = 0;
     const chunks: Buffer[] = [];
     for await (const c of req) {
       size += (c as Buffer).length;
-      if (size > MAX_BODY) return send(413, { error: 'too_large' });
+      if (size > limit) { res.setHeader('connection', 'close'); return send(413, { error: 'too_large' }); }
       chunks.push(c as Buffer);
     }
     let body: unknown;
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400, { error: 'bad_json' }); }
-    const out = await route(body, env as any);
+    const out = isV1 ? await analyzePhoto(req.headers.authorization, body, env.analysis!) : await legacy!(body, env as any);
     send(out.status, out.json);
   });
 }
 
 if (process.argv[1] && /server[\\/]index\.ts$/.test(process.argv[1])) {
   const port = Number(process.env.PORT ?? 8787);
+  const cfg = parseCloudConfig(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); // refuses service-role / secret keys
+  const num = (v: string | undefined, d: number) => (v && Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
+  const supabase = cfg.ok ? { url: cfg.url, anonKey: cfg.anonKey } : undefined;
+  if (!supabase) console.warn('SUPABASE_URL / SUPABASE_ANON_KEY (public key) missing or invalid: authenticated analysis is DISABLED');
   createServer({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-    model: process.env.RECOGNITION_MODEL,
     allowedOrigin: process.env.ALLOWED_ORIGIN,
-    token: process.env.RECOGNITION_TOKEN,
-  }).listen(port, () => console.log(`recognition server on :${port}${process.env.ANTHROPIC_API_KEY ? '' : ' (ANTHROPIC_API_KEY missing)'}`));
+    analysis: supabase ? {
+      supabase,
+      quota: supabaseQuota(supabase),
+      photos: supabasePhotos(supabase),
+      provider: process.env.GEMINI_API_KEY ? geminiProvider({ apiKey: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL }) : undefined,
+      limits: { perDay: num(process.env.AI_PER_DAY, DEFAULT_LIMITS.perDay), perMonth: num(process.env.AI_PER_MONTH, DEFAULT_LIMITS.perMonth), globalPerDay: num(process.env.AI_GLOBAL_PER_DAY, DEFAULT_LIMITS.globalPerDay) },
+      inFlight: new Set<string>(),
+    } : undefined,
+    legacyUnauthenticated: process.env.ALLOW_LEGACY_UNAUTHENTICATED === '1' && process.env.NODE_ENV !== 'production',
+    apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.RECOGNITION_MODEL, token: process.env.RECOGNITION_TOKEN,
+  }).listen(port, () => console.log(`server on :${port} (authenticated analysis ${supabase ? 'on' : 'OFF'}, provider ${process.env.GEMINI_API_KEY ? 'configured' : 'NOT configured'})`));
 }

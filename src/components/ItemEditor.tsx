@@ -9,6 +9,7 @@ import { cardStyle, rowDir, text } from '../ui';
 import { Chip } from './Chip';
 import { Btn } from './Btn';
 import { defaultsFor } from '../tagging/tagger';
+import { getSupabase } from '../cloud/client';
 import { checkRecognitionServer, createRecognitionTagger, RECOGNITION_URL, RecognitionError, type RecognitionStatus } from '../tagging/recognition';
 import { partForCategory, type BrandGuess, type TagField, type TagSuggestion } from '../tagging/schema';
 import { persistPhoto, type PreparedPhoto } from '../storage/persist';
@@ -33,6 +34,8 @@ const Label = ({ children, flag, required }: { children: string; flag?: boolean;
     {flag && !required && <Text style={{ fontSize: 11, color: theme.warn, borderWidth: 1, borderColor: theme.warn, borderRadius: 8, paddingHorizontal: 6 }}>לבדיקה</Text>}
   </View>
 );
+
+const accessToken = async () => (await getSupabase()?.auth.getSession())?.data.session?.access_token ?? null;
 
 const STATUS_TEXT: Record<Exclude<RecognitionStatus, 'ready' | 'checking'>, string> = {
   unconfigured: 'זיהוי אוטומטי לא פעיל בגרסה הזו (לא הוגדר שרת זיהוי), ולכן שום דבר לא נשלח ולא הוצעו תגיות. מלאו את הפרטים ידנית.',
@@ -112,13 +115,13 @@ export function ItemEditor({ item, visible, onClose, initial }: { item: Item | n
     if (!photo) return;
     setPhase('running');
     try {
-      const s = await createRecognitionTagger().suggest({ base64: photo.base64, mediaType: photo.mediaType });
+      const s = await createRecognitionTagger(undefined, fetch, 25000, accessToken).suggest({ base64: photo.base64, mediaType: photo.mediaType });
       applySuggestion(s);
       setPhase('done');
     } catch (e) {
       setPhase('failed');
       const kind = e instanceof RecognitionError ? e.kind : 'server';
-      setNote(kind === 'not_garment' ? 'לא זוהה בגד אחד בתמונה. אפשר לצלם שוב או למלא ידנית.' : kind === 'network' ? 'אין חיבור לשירות הזיהוי. לא הוצעו תגיות, מלאו ידנית.' : 'שירות הזיהוי נכשל או לא זמין כרגע. לא הוצעו תגיות, מלאו ידנית.');
+      setNote(kind === 'not_garment' ? 'לא זוהה בגד אחד בתמונה. אפשר לצלם שוב או למלא ידנית.' : kind === 'unauthorized' ? 'ההתחברות פגה, ולכן הזיהוי לא רץ. התחברו מחדש, או מלאו ידנית.' : kind === 'quota' ? 'ניצלתם את מכסת הזיהוי האוטומטי. אפשר למלא ידנית, ולנסות שוב מאוחר יותר.' : kind === 'too_large' ? 'התמונה גדולה מדי לזיהוי. צלמו שוב או מלאו ידנית.' : kind === 'busy' ? 'זיהוי אחר עדיין רץ. נסו שוב בעוד רגע, או מלאו ידנית.' : kind === 'network' ? 'אין חיבור לשירות הזיהוי. לא הוצעו תגיות, מלאו ידנית.' : 'שירות הזיהוי נכשל או לא זמין כרגע. לא הוצעו תגיות, מלאו ידנית.');
     }
   };
 
