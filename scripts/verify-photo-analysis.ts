@@ -15,7 +15,7 @@ import { analyzePhoto, supabasePhotos, type AnalysisDeps } from '../server/photo
 import { supabaseQuota } from '../server/quota';
 
 const env = (k: string) => (process.env[k] ?? '').trim();
-const need = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'EXPECT_PROJECT_REF', 'TEST_A_EMAIL', 'TEST_A_PASSWORD', 'TEST_B_EMAIL', 'TEST_B_PASSWORD'];
+const need = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'EXPECT_PROJECT_REF', 'AI_QUOTA_SERVER_KEY', 'TEST_A_EMAIL', 'TEST_A_PASSWORD', 'TEST_B_EMAIL', 'TEST_B_PASSWORD'];
 if (need.some((k) => !env(k))) { console.log('PENDING: set', need.filter((k) => !env(k)).join(', ')); process.exit(2); }
 const URL_ = env('SUPABASE_URL').replace(/\/+$/, ''); const ANON = env('SUPABASE_ANON_KEY');
 if (new URL(URL_).hostname !== `${env('EXPECT_PROJECT_REF')}.supabase.co`) { console.log('REFUSING TO RUN: SUPABASE_URL does not match EXPECT_PROJECT_REF'); process.exit(1); }
@@ -41,9 +41,10 @@ async function main() {
   const A = await login(env('TEST_A_EMAIL'), env('TEST_A_PASSWORD'));
   const B = await login(env('TEST_B_EMAIL'), env('TEST_B_PASSWORD'));
   const supa = { url: URL_, anonKey: ANON };
+  const serverKey = env('AI_QUOTA_SERVER_KEY');
   let providerCalls = 0;
   const deps = (): AnalysisDeps => ({
-    supabase: supa, quota: supabaseQuota(supa), photos: supabasePhotos(supa), inFlight: new Set(),
+    supabase: supa, quota: supabaseQuota({ ...supa, serverKey }), photos: supabasePhotos(supa), inFlight: new Set(),
     provider: { async analyze() { providerCalls++; return GARMENT; } },
   });
   const bearer = (t: string) => `Bearer ${t}`;
@@ -105,7 +106,18 @@ async function main() {
     assert((await used(A.sb)) === 20, 'counter was reset or changed');
   });
 
-  await check('RPC guards: anonymous refused; unknown kind refused; callers cannot choose limits; limits table is unreadable; a user cannot push the global count beyond their own daily cap', async () => {
+  await check('QUOTA IS SERVER-ONLY: a verified user calling the RPC directly (no key / wrong key) is refused and nothing is consumed', async () => {
+    const before = await used(A.sb);
+    const direct = await A.sb.rpc('consume_ai_quota', { p_kind: 'analyze_photo' });
+    assert(direct.error, 'direct call without the server key was accepted');
+    const wrong = await fetch(`${URL_}/rest/v1/rpc/consume_ai_quota`, { method: 'POST', headers: { authorization: `Bearer ${A.token}`, apikey: ANON, 'content-type': 'application/json', 'x-ai-server-key': 'x'.repeat(40) }, body: JSON.stringify({ p_kind: 'analyze_photo' }) });
+    assert(!wrong.ok, 'wrong server key accepted');
+    const right = await fetch(`${URL_}/rest/v1/rpc/consume_ai_quota`, { method: 'POST', headers: { apikey: ANON, 'x-ai-server-key': serverKey, 'content-type': 'application/json' }, body: JSON.stringify({ p_kind: 'analyze_photo' }) });
+    assert(!right.ok, 'the server key without a user session was accepted');
+    assert((await used(A.sb)) === before, 'quota changed during refused calls');
+  });
+
+  await check('RPC guards: anonymous refused; unknown kind refused; callers cannot choose limits; limits table and key table unreadable; direct calls change nothing', async () => {
     const anon = client();
     assert((await anon.rpc('consume_ai_quota', { p_kind: 'analyze_photo' })).error, 'anon could call the RPC');
     assert((await A.sb.rpc('consume_ai_quota', { p_kind: 'other' })).error, 'unknown kind accepted');
@@ -115,7 +127,10 @@ async function main() {
     assert(lim.error || (lim.data ?? []).length === 0, 'limits table readable by users');
     // A is already at the fixed daily cap: direct RPC calls cannot add more, so one account cannot inflate the global count
     const before = await used(A.sb);
-    for (let i = 0; i < 5; i++) { const r: any = await A.sb.rpc('consume_ai_quota', { p_kind: 'analyze_photo' }); assert(!r.error && r.data?.allowed === false, 'direct call went past the cap'); }
+    for (let i = 0; i < 5; i++) { const r: any = await A.sb.rpc('consume_ai_quota', { p_kind: 'analyze_photo' }); assert(r.error, 'direct call was accepted'); }
+    assert((await A.sb.from('ai_quota_server_keys').select('*')).error || true, 'n/a');
+    const keys = await A.sb.from('ai_quota_server_keys').select('*');
+    assert(keys.error || (keys.data ?? []).length === 0, 'server key table readable by users');
     assert((await used(A.sb)) === before, 'direct calls changed the counter');
   });
 

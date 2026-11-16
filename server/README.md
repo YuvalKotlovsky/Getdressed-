@@ -24,9 +24,37 @@ Without `GEMINI_API_KEY` the server answers 503 `not_configured` and the editor 
 - `npx tsx --test tests/photo-analysis.test.ts` (mock Gemini + fake Supabase): sessions, ownership, limits, quota, fail-closed, HTTP, client error mapping.
 - LIVE against dev, mocked provider: `npx tsx --env-file=.env.verify scripts/verify-photo-analysis.ts` (then delete the synthetic users' `ai_usage` rows with admin tooling).
 
-## Steps for a REAL Gemini test (separate decision; not done)
-1. Owner creates a Gemini API key for a dev-only project/billing cap and exports it only in the local shell running the server.
-2. Start the server as above; sign in to the app against the dev project; take 15-30 real photos (leggings, dresses, shoes, multi-item shots).
-3. Compare suggestions with the existing validation rules and record accuracy, latency and token cost per call (the Gemini response includes usage metadata; logging it is a TODO before any public use).
-4. Confirm the model id (`GEMINI_MODEL`; default `gemini-2.5-flash-lite` is an assumption to verify against the current Gemini model list) and that `responseMimeType: application/json` is honoured.
-5. Only then decide on deployment: an HTTPS host, per-environment secrets, global budget alert/kill switch, and the remaining items in CLAUDE.md "Requirements before ANY Gemini call".
+## Quota is server-only (migration `20261117000000`)
+`consume_ai_quota` needs the caller's JWT (whose quota) AND the header `x-ai-server-key` (proof that the call comes from this backend). The database stores only the SHA-256 of that key in `ai_quota_server_keys` (no policies, no grants); with no key stored every call is refused. A verified user calling the RPC directly is refused (`42501`) and consumes nothing.
+
+Set it up once per environment (dev now; staging/prod later, each with its OWN key):
+```
+KEY=$(openssl rand -hex 32)                          # keep it ONLY in the backend's secret store / a git-ignored file
+printf 'AI_QUOTA_SERVER_KEY=%s\n' "$KEY" >> .env.verify   # dev tests also need it (the file is git-ignored)
+HASH=$(printf %s "$KEY" | shasum -a 256 | cut -d' ' -f1)
+supabase db query --remote=<DEV REF> --yes "insert into public.ai_quota_server_keys (id, key_sha256) values (1, '$HASH') on conflict (id) do update set key_sha256 = excluded.key_sha256"
+```
+Rotate by repeating with a new key (the old one stops working immediately). Always check the printed `Target:` shows the intended project.
+
+## Gemini: what the code uses (checked against Google's official docs on 2026-11-16)
+- **Model:** `gemini-3.5-flash-lite` is the current stable Flash-Lite ("Stable", latest update July 2026, no shutdown date announced; `gemini-3.1-flash-lite` is stable until 2027-05-07; `gemini-2.5-flash-lite` is still served but Google says new projects should use 3.5 Flash-Lite). Source: aistudio.google.com/docs/models, /docs/models/gemini-3.5-flash-lite, /docs/deprecations.
+- **Endpoint:** the Interactions API, `POST https://generativelanguage.googleapis.com/v1beta/interactions` ("generally available and the recommended interface for all new projects"; `generateContent` is "legacy but fully supported"). Key in the `x-goog-api-key` header. Image as `{"type":"image","data":"<base64>","mime_type":"image/jpeg"}` (inline requests up to 20 MB). Source: /docs/interactions-overview, /docs/migrate-to-interactions, /docs/image-understanding.
+- **Structured output:** `response_format: {"type":"text","mime_type":"application/json","schema":{...}}` with the JSON Schema in `src/tagging/schema.ts` (`RECOGNITION_JSON_SCHEMA`; enum/nullable-as-type-array are documented as supported). Google states the output is syntactically valid JSON and that values must still be validated, which `normalizeRecognition` does. Source: /docs/structured-output.
+- **Thinking/limits:** `generation_config.thinking_level: "minimal"` (documented as the default for 3.5 Flash-Lite) and `max_output_tokens: 1024`, which INCLUDES thinking tokens (a hit cap returns status `incomplete`, treated as an upstream error). `store: false` so Google does not keep the interaction. `temperature` is not listed for the Interactions API and is not sent.
+- **Usage:** response `usage.total_input_tokens / total_output_tokens / total_thought_tokens / total_tokens` (confirmed on the thinking/tokens pages; the exact placement in a real response is what the pilot confirms). Images over 384 px are tiled into 768x768 tiles at 258 tokens each (a 1400x1050 photo = 4 tiles = 1032 tokens).
+- **Price (paid Standard tier, per 1M tokens, as printed 2026-11-16):** input $0.30 (text/image), output $2.50 including thinking tokens. **Free tier:** free of charge BUT content is used to improve Google's products; paid tier: not used. Use a paid-tier key for real clothing photos.
+- **Not confirmed from official pages:** a worked inline-image Interactions curl with `usage` in the response, and `generateContent` support for `gemini-3.5-flash-lite` (not used here). The pilot is the first real check of the request/response shape.
+
+## Configure a server-side DEV key (steps; nothing here has been run with a real key)
+1. In Google AI Studio create a key for a DEV-only project, on the paid tier (so photos are not used for training), with a low budget alert/spend cap at Google. Starting 2026-05-28 new AI Studio keys are "auth keys" and the API rejects unrestricted standard keys: use the key type the console offers for server use.
+2. Put it ONLY in a git-ignored file, never in chat, Git or the app: `printf 'GEMINI_API_KEY=%s\nGEMINI_MODEL=gemini-3.5-flash-lite\nPILOT_MAX_CALLS=5\n' '<key>' > .env.pilot` (`.env.*` is already ignored).
+3. Run the server locally against the dev project: `npx tsx --env-file=.env.verify --env-file=.env.pilot server/index.ts` (needs `SUPABASE_URL`, `SUPABASE_ANON_KEY` (public key), `AI_QUOTA_SERVER_KEY`; set `ALLOWED_ORIGIN=http://localhost:8081` for a local web build). The server logs one JSON usage line per provider call (latency and tokens, no user id, no photo).
+
+## Dev pilot (5 photos, cap enforced in code) - NOT RUN
+Photos stay in the git-ignored `/pilot/` folder: 5 representative photos (leggings, a dress, the clog that was misclassified as a shirt, plus two more such as a shoe pair and a multi-item shot). Prepare each like the app does (longest edge 1400 px, JPEG, under 1.5 MB): `sips -Z 1400 -s format jpeg in.heic --out pilot/leggings.jpg`. Create `pilot/manifest.json`: `[{"file":"leggings.jpg","expect":{"category":"activewear"}}, {"file":"dress.jpg","expect":{"category":"dress"}}, {"file":"clog.jpg","expect":{"category":"shoes","note":"clog, was misclassified as a shirt"}}, ...]`.
+- **Dry run (no call):** `npx tsx --env-file=.env.verify --env-file=.env.pilot scripts/gemini-pilot.ts`
+- **Live:** same command with `--confirm`.
+- **Maximum calls: 5** (`PILOT_MAX_CALLS`, hard ceiling 8 in code). Enforced by: the manifest may not list more photos than the cap; a persisted counter `pilot/.calls` is incremented BEFORE every provider call and the script refuses at the cap, so reruns cannot exceed it; no retries; one call at a time; dev project only; the database quota (20/day) applies on top; plus the budget cap you set on the key at Google.
+- **Estimated cost:** about 2,000 input tokens per call (about 1,032 image tokens for a 1400x1050 photo + about 900 prompt tokens) and about 300 output tokens: roughly $0.0014 per call, about $0.007 for 5 calls, under $0.02 even if every call were twice as large.
+- **Recorded per photo** (to `pilot/results-<time>.json`, git-ignored): the suggested tags and flagged fields, HTTP status/error, latency, token usage and estimated cost, next to the expected category.
+- **After the pilot:** compare with `expect`, decide on the model/thinking level, then (separate decision) wire the cost logging into a real monitor before any deployment.

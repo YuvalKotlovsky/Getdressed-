@@ -206,6 +206,12 @@ begin
     raise exception 'RLS CHECK FAILED: a limit-taking consume_ai_quota overload exists';
   end if;
 
+  if not exists (select 1 from pg_class where oid = 'public.ai_quota_server_keys'::regclass and relrowsecurity and relforcerowsecurity)
+     or has_table_privilege('anon', 'public.ai_quota_server_keys', 'select,insert,update,delete')
+     or has_table_privilege('authenticated', 'public.ai_quota_server_keys', 'select,insert,update,delete') then
+    raise exception 'RLS CHECK FAILED: ai_quota_server_keys must have forced RLS and no user grants';
+  end if;
+
   raise notice 'ALL RLS CATALOG CHECKS PASSED';
 end
 $$;

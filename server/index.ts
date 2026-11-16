@@ -153,17 +153,19 @@ export function createServer(env: ServerEnv) {
 if (process.argv[1] && /server[\\/]index\.ts$/.test(process.argv[1])) {
   const port = Number(process.env.PORT ?? 8787);
   const cfg = parseCloudConfig(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); // refuses service-role / secret keys
-  const supabase = cfg.ok ? { url: cfg.url, anonKey: cfg.anonKey } : undefined;
-  if (!supabase) console.warn('SUPABASE_URL / SUPABASE_ANON_KEY (public key) missing or invalid: authenticated analysis is DISABLED');
+  const serverKey = (process.env.AI_QUOTA_SERVER_KEY ?? '').trim();
+  const supabase = cfg.ok && serverKey.length >= 32 ? { url: cfg.url, anonKey: cfg.anonKey } : undefined;
+  if (!supabase) console.warn('SUPABASE_URL / SUPABASE_ANON_KEY (public key) / AI_QUOTA_SERVER_KEY (>= 32 chars) missing or invalid: authenticated analysis is DISABLED');
   const legacyUnauthenticated = process.env.ALLOW_LEGACY_UNAUTHENTICATED === '1' && process.env.NODE_ENV !== 'production';
   createServer({
     allowedOrigin: process.env.ALLOWED_ORIGIN,
     analysis: supabase ? {
       supabase,
-      quota: supabaseQuota(supabase),
+      quota: supabaseQuota({ ...supabase, serverKey }),
       photos: supabasePhotos(supabase),
       provider: process.env.GEMINI_API_KEY ? geminiProvider({ apiKey: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL }) : undefined,
       inFlight: new Set<string>(),
+      onUsage: (r) => console.log(JSON.stringify({ at: new Date().toISOString(), kind: 'analyze_photo', ...r })), // cost monitoring: no user id, no photo
     } : undefined,
     legacyUnauthenticated,
     trustProxyHops: Number(process.env.TRUST_PROXY_HOPS ?? 0) || 0,

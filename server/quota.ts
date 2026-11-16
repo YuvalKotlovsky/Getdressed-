@@ -2,14 +2,14 @@
 export type QuotaResult = { allowed: true; used: number; limit: number } | { allowed: false; scope: 'day' | 'month' | 'global'; used: number; limit: number } | { allowed: 'error' };
 export interface QuotaStore { consume(user: { userId: string; token: string }, kind: 'analyze_photo'): Promise<QuotaResult> }
 
-/** Calls the RPC as the caller (their JWT), so the function sees auth.uid() and the verified-email check. */
-export function supabaseQuota(env: { url: string; anonKey: string; fetchImpl?: typeof fetch }): QuotaStore {
+/** Calls the RPC as the caller (their JWT: auth.uid() says whose quota) AND with the server-only key (proves the call comes from this backend). */
+export function supabaseQuota(env: { url: string; anonKey: string; serverKey: string; fetchImpl?: typeof fetch }): QuotaStore {
   return {
     async consume(user, kind) {
       try {
         const res = await (env.fetchImpl ?? fetch)(`${env.url.replace(/\/+$/, '')}/rest/v1/rpc/consume_ai_quota`, {
           method: 'POST',
-          headers: { authorization: `Bearer ${user.token}`, apikey: env.anonKey, 'content-type': 'application/json' },
+          headers: { authorization: `Bearer ${user.token}`, apikey: env.anonKey, 'content-type': 'application/json', 'x-ai-server-key': env.serverKey }, // server-only secret: the database refuses the RPC without it
           body: JSON.stringify({ p_kind: kind }),
           signal: AbortSignal.timeout(8000),
         });

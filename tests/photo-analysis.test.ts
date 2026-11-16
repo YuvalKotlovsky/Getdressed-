@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import { analyzePhoto, MAX_IMAGE_BYTES, type AnalysisDeps, type PhotoStore } from '../server/photoAnalysis';
-import { geminiProvider, type Provider } from '../server/gemini';
+import { estimateCostUSD, geminiProvider, type Provider } from '../server/gemini';
 import { createServer } from '../server/index';
 import type { QuotaResult, QuotaStore } from '../server/quota';
 type QuotaLimits = { perDay: number; perMonth: number; globalPerDay: number }; // fixed inside the database in production; modelled here by the fake
@@ -169,15 +169,30 @@ test('provider failures stay counted (no free retries), not-a-garment is 422, un
   release(); assert.equal((await first).status, 200);
 });
 
-test('Gemini adapter: sends the image + prompt with the key in a header, parses candidates, never leaks the key', async () => {
+test('Gemini adapter (Interactions API): image + prompt + JSON schema, key in a header, nothing stored, usage and cost parsed, failures typed', async () => {
   let seen: any;
-  const f = (async (url: string, init: any) => { seen = { url, init }; return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: GARMENT }] } }] }), { status: 200 }); }) as any;
-  const text = await geminiProvider({ apiKey: 'AIza-secret', fetchImpl: f }).analyze({ bytes: JPEG, mediaType: 'image/jpeg' }, 'PROMPT');
-  assert.equal(text, GARMENT);
-  assert.ok(!seen.url.includes('AIza-secret')); assert.equal(seen.init.headers['x-goog-api-key'], 'AIza-secret');
+  const reply = (over: any = {}) => (async (url: string, init: any) => { seen = { url, init }; return new Response(JSON.stringify({ status: 'completed', steps: [{ type: 'user_input', content: [] }, { type: 'model_output', content: [{ type: 'text', text: GARMENT }] }], usage: { total_input_tokens: 2000, total_output_tokens: 250, total_thought_tokens: 0, total_tokens: 2250 }, ...over }), { status: 200 }); }) as any;
+  const r: any = await geminiProvider({ apiKey: 'AIza-secret', fetchImpl: reply() }).analyze({ bytes: JPEG, mediaType: 'image/jpeg' }, 'PROMPT');
+  assert.equal(r.text, GARMENT);
+  assert.deepEqual(r.usage, { input: 2000, output: 250, thoughts: 0, total: 2250 });
+  assert.ok(Math.abs(estimateCostUSD(r.usage)! - (2000 * 0.30 + 250 * 2.50) / 1e6) < 1e-12);
+  assert.ok(seen.url.endsWith('/v1beta/interactions')); assert.ok(!seen.url.includes('AIza-secret'));
+  assert.equal(seen.init.headers['x-goog-api-key'], 'AIza-secret');
   const body = JSON.parse(seen.init.body);
-  assert.equal(body.contents[0].parts[0].inline_data.mime_type, 'image/jpeg'); assert.equal(body.generationConfig.maxOutputTokens, 500);
+  assert.equal(body.model, 'gemini-3.5-flash-lite');
+  assert.deepEqual(body.input[1], { type: 'image', data: JPEG.toString('base64'), mime_type: 'image/jpeg' });
+  assert.equal(body.input[0].text, 'PROMPT');
+  assert.equal(body.response_format.mime_type, 'application/json'); assert.equal(body.response_format.schema.properties.category.enum.includes('shoes'), true);
+  assert.deepEqual([body.generation_config.max_output_tokens, body.generation_config.thinking_level, body.store], [1024, 'minimal', false]);
+  const bad = (over: any) => geminiProvider({ apiKey: 'k', fetchImpl: reply(over) }).analyze({ bytes: JPEG, mediaType: 'image/jpeg' }, 'p');
+  await assert.rejects(bad({ status: 'incomplete' })); // output cap hit while thinking
+  await assert.rejects(bad({ steps: [] }));
   await assert.rejects(geminiProvider({ apiKey: 'k', fetchImpl: (async () => new Response('x', { status: 500 })) as any }).analyze({ bytes: JPEG, mediaType: 'image/jpeg' }, 'p'));
+  // usage is reported through the server hook without any user id or photo
+  const s = setup({ provider: { async analyze() { return { text: GARMENT, usage: { input: 10, output: 5 } }; } } });
+  let rec: any; s.deps.onUsage = (x) => { rec = x; };
+  assert.equal((await analyzePhoto(hdr(A), { image: b64(JPEG) }, s.deps)).status, 200);
+  assert.deepEqual(Object.keys(rec).sort(), ['ms', 'ok', 'usage']); assert.equal(rec.usage.input, 10);
 });
 
 function rawPost(base: string, path: string, headers: Record<string, string>, body: string): Promise<number> {

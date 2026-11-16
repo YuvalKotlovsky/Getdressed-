@@ -1,7 +1,7 @@
 import { RECOGNITION_PROMPT, extractJson, normalizeRecognition } from '../src/tagging/schema';
 import { verifySession, type SupabaseServerEnv, type Verified } from './auth';
 import type { QuotaStore } from './quota';
-import { ProviderError, type Provider } from './gemini';
+import { ProviderError, type Provider, type Usage } from './gemini';
 
 export const MAX_IMAGE_BYTES = 1_500_000;           // decoded image
 export const MAX_BODY_BYTES = 2_600_000;            // JSON body incl. base64 overhead; enforced by the HTTP layer too
@@ -17,6 +17,8 @@ export interface AnalysisDeps {
   /** users with a request in flight (one at a time per user caps cost multiplication); single-instance only */
   inFlight?: Set<string>;
   maxImageBytes?: number;
+  /** usage record for each admitted provider call (no user id, no photo): feeds cost monitoring */
+  onUsage?: (r: { ms: number; ok: boolean; usage?: Usage }) => void;
 }
 
 export function sniffImage(b: Buffer): 'image/jpeg' | 'image/png' | 'image/webp' | null {
@@ -80,8 +82,15 @@ export async function analyzePhoto(authorization: string | undefined, body: any,
     if (q.allowed === false) return err(429, 'quota_exceeded', { scope: q.scope, limit: q.limit });
 
     let text: string;
-    try { text = await deps.provider.analyze({ bytes: bytes!, mediaType }, RECOGNITION_PROMPT); }
-    catch (e) { return err(502, e instanceof ProviderError && e.kind === 'timeout' ? 'upstream_timeout' : 'upstream'); } // the attempt stays counted: no retries that multiply cost
+    const t0 = Date.now();
+    try {
+      const out = await deps.provider.analyze({ bytes: bytes!, mediaType }, RECOGNITION_PROMPT);
+      text = typeof out === 'string' ? out : out.text;
+      deps.onUsage?.({ ms: Date.now() - t0, ok: true, usage: typeof out === 'string' ? undefined : out.usage });
+    } catch (e) {
+      deps.onUsage?.({ ms: Date.now() - t0, ok: false });
+      return err(502, e instanceof ProviderError && e.kind === 'timeout' ? 'upstream_timeout' : 'upstream');
+    } // the attempt stays counted: no retries that multiply cost
     const n = normalizeRecognition(extractJson(text));
     if (!n.ok) return n.error === 'not_garment' ? err(422, 'not_garment') : err(502, 'invalid');
     return { status: 200, json: { suggestion: n.suggestion, quota: { used: q.used, limit: q.limit } } };
