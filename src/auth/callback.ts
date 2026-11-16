@@ -4,6 +4,14 @@
  *   #error=access_denied&error_code=otp_expired&error_description=...   (expired / already used / invalid)
  * (some versions use ?query instead of #fragment). Never returns the tokens themselves.
  */
+/** Remove a leftover token fragment from the address bar/history (called once the session attempt has settled). */
+export function scrubAuthUrl(): void {
+  try {
+    const w = (globalThis as { location?: Location; history?: History }).location;
+    if (w && /access_token|refresh_token/.test(`${w.hash}${w.search}`)) (globalThis as { history?: History }).history?.replaceState(null, '', w.pathname);
+  } catch { /* not a browser */ }
+}
+
 export type AuthCallback =
   | { kind: 'none' }
   | { kind: 'session' }
@@ -18,7 +26,6 @@ export function parseAuthCallback(hash: string, search = ''): AuthCallback {
     return { kind: 'error', reason: code === 'otp_expired' ? 'expired' : 'invalid' };
   }
   if (get('access_token') && get('refresh_token')) return { kind: 'session' };
-  if (get('code') && !get('state')) return { kind: 'session' };
   return { kind: 'none' };
 }
 

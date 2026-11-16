@@ -3,7 +3,7 @@ import type { User } from '@supabase/supabase-js';
 import { getSupabase } from '../cloud/client';
 import { cloudConfig } from '../cloud/config';
 import { describeAuthError, type AuthFail } from './errors';
-import { emailRedirectUrl, readAuthCallbackOnce } from './callback';
+import { emailRedirectUrl, readAuthCallbackOnce, scrubAuthUrl } from './callback';
 
 /**
  * unconfigured  - this build has no Supabase URL/key (the app cannot be used)
@@ -19,7 +19,7 @@ interface AuthCtx {
   /** email waiting for verification */
   pendingEmail: string | null;
   /** set when the user arrived through an email link that did not give them a session */
-  linkNotice: 'expired' | 'verified-signin' | null;
+  linkNotice: 'expired' | 'invalid' | 'verified-signin' | null;
   dismissLinkNotice(): void;
   signUp(email: string, password: string): Promise<AuthFail | null>;
   signIn(email: string, password: string): Promise<AuthFail | null>;
@@ -44,7 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const callback = useMemo(() => readAuthCallbackOnce(), []);
-  const [linkNotice, setLinkNotice] = useState<'expired' | 'verified-signin' | null>(callback.kind === 'error' ? 'expired' : null);
+  const [linkNotice, setLinkNotice] = useState<'expired' | 'invalid' | 'verified-signin' | null>(callback.kind === 'error' ? callback.reason : null);
   const unconfigured = { text: describeAuthError('unconfigured').text, kind: 'other' as const };
 
   const apply = useCallback((u: User | null | undefined) => {
@@ -56,10 +56,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!sb) return;
     let live = true;
-    sb.auth.getSession().then(({ data }) => { if (live) apply(data.session?.user); });
+    sb.auth.getSession().then(({ data }) => {
+      if (!live) return;
+      apply(data.session?.user);
+      if (callback.kind === 'session') { scrubAuthUrl(); if (!data.session) setLinkNotice('verified-signin'); }
+    });
     const { data: sub } = sb.auth.onAuthStateChange((_e, session) => { if (live) apply(session?.user); });
     return () => { live = false; sub.subscription.unsubscribe(); };
-  }, [sb, apply]);
+  }, [sb, apply, callback]);
 
   // The link carried a session but the browser could not turn it into one: say so instead of leaving a blank sign-in.
   const statusRef = useRef(status);

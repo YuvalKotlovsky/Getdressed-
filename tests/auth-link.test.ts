@@ -30,3 +30,9 @@ test('other errors map to Hebrew and never leak server text', () => {
   assert.match(describeAuthError({ code: 'email_address_invalid', message: 'Email address "x" is invalid' }).text, /לא תקינה/);
   assert.equal(describeAuthError({ code: 'weird', message: 'Secret internal detail' }).text.includes('Secret'), false);
 });
+test('an unrelated ?code= parameter is not mistaken for a confirmation', () => {
+  assert.deepEqual(parseAuthCallback('', '?code=abc'), { kind: 'none' });
+});
+test('cooldown of one second is worded in the singular', () => {
+  assert.match(describeAuthError({ code: 'over_email_send_rate_limit', message: 'For security purposes, you can only request this after 1 seconds.' }).text, /שנייה אחת/);
+});

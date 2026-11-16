@@ -25,9 +25,9 @@ export function describeAuthError(err: { code?: string; message?: string; status
     const m = /after (\d+) second/.exec(msg);
     if (m || c.includes('only request this after')) {
       const sec = m ? Math.max(1, Number(m[1])) : 60;
-      return { kind: 'cooldown', retryAfterSec: sec, text: `בקשה לשליחת מייל כבר נשלחה לכתובת הזו. אפשר לבקש שוב בעוד ${sec} שניות.` };
+      return { kind: 'cooldown', retryAfterSec: sec, text: `בקשה לשליחת מייל כבר נשלחה לכתובת הזו. אפשר לבקש שוב בעוד ${sec === 1 ? 'שנייה אחת' : `${sec} שניות`}.` };
     }
-    return { kind: 'email-quota', text: 'מכסת המיילים של סביבת הבדיקה התמלאה לשעה הקרובה (לא קשור לכתובת שלכם). נסו שוב מאוחר יותר.' };
+    return { kind: 'email-quota', text: 'מכסת שליחת המיילים של השירות התמלאה לשעה הקרובה (לא קשור לכתובת שלכם). נסו שוב מאוחר יותר.' };
   }
   if (c.includes('over_request_rate_limit') || c.includes('request rate limit') || c.includes('rate limit') || err_status(err) === 429) {
     return { kind: 'request-rate', retryAfterSec: 60, text: 'יותר מדי בקשות מהרשת הזו. המתינו דקה ונסו שוב.' };

@@ -8,6 +8,7 @@ import { theme } from '../theme';
 import { text } from '../ui';
 
 const input = { ...text(16), borderWidth: 1, borderColor: theme.lineStrong, borderRadius: 12, backgroundColor: theme.card, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 12 } as const;
+const secs = (n: number) => (n === 1 ? 'שנייה אחת' : `${n} שניות`);
 const emailOk = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 
 function Frame({ children }: { children: React.ReactNode }) {
@@ -25,7 +26,11 @@ function Frame({ children }: { children: React.ReactNode }) {
 function useCooldown() {
   const [until, setUntil] = useState(0);
   const [, tick] = useState(0);
-  useEffect(() => { if (until <= Date.now()) return; const id = setInterval(() => tick((n) => n + 1), 500); return () => clearInterval(id); }, [until]);
+  useEffect(() => {
+    if (until <= Date.now()) return;
+    const id = setInterval(() => { tick((n) => n + 1); if (Date.now() >= until) clearInterval(id); }, 500);
+    return () => clearInterval(id);
+  }, [until]);
   return { left: Math.max(0, Math.ceil((until - Date.now()) / 1000)), start: (sec: number) => setUntil(Date.now() + sec * 1000) };
 }
 
@@ -74,7 +79,7 @@ export function AuthScreen() {
   }
 
   const submit = () => {
-    if (lock.current || cooldown.left > 0) return;
+    if (lock.current || (register && cooldown.left > 0)) return;
     setError(null); setInfo(null);
     if (!emailOk(email)) { setError('כתובת האימייל לא תקינה.'); return; }
     if (register && password.length < 8) { setError('הסיסמה צריכה להכיל 8 תווים לפחות.'); return; }
@@ -84,13 +89,13 @@ export function AuthScreen() {
 
   const noticeBox = linkNotice && (
     <View style={{ marginBottom: 16, padding: 14, borderRadius: 12, backgroundColor: theme.card, borderWidth: 1, borderColor: theme.line }}>
-      {linkNotice === 'expired' ? (
+      {(linkNotice === 'expired' || linkNotice === 'invalid') ? (
         <>
-          <Text style={text(15, '700')}>קישור האישור כבר לא תקף</Text>
-          <Text style={[text(14, '400', theme.muted), { marginTop: 6 }]}>הוא פג תוקף או שכבר נעשה בו שימוש. אם החשבון כבר אומת, פשוט התחברו. אחרת, הכניסו את האימייל ונשלח קישור חדש.</Text>
+          <Text style={text(15, '700')}>קישור האישור לא עבד</Text>
+          <Text style={[text(14, '400', theme.muted), { marginTop: 6 }]}>{linkNotice === 'expired' ? 'הוא פג תוקף או שכבר נעשה בו שימוש.' : 'הקישור לא תקין.'} אם החשבון כבר אומת, פשוט התחברו. אחרת, הכניסו את האימייל ונשלח קישור חדש.</Text>
           <View style={{ flexDirection: 'row', marginTop: 10 }}>
             <Btn label={cooldown.left > 0 ? `שליחת קישור חדש (${cooldown.left})` : 'שליחת קישור חדש'} kind="ghost" disabled={busy || cooldown.left > 0}
-              onPress={() => { if (!emailOk(email)) { setError('הכניסו את כתובת האימייל למעלה.'); return; } run(async () => { const f = await resendVerification(email); if (!f) { setInfo('אם החשבון עדיין לא אומת, נשלח אליו קישור חדש.'); cooldown.start(60); } return f; }); }} />
+              onPress={() => { if (!emailOk(email)) { setError('הכניסו את כתובת האימייל בשדה למטה.'); return; } run(async () => { const f = await resendVerification(email); if (!f) { setInfo('אם החשבון עדיין לא אומת, נשלח אליו קישור חדש.'); cooldown.start(60); } return f; }); }} />
           </View>
         </>
       ) : (
@@ -111,7 +116,7 @@ export function AuthScreen() {
       <TextInput value={password} onChangeText={setPassword} placeholder="סיסמה" secureTextEntry autoCapitalize="none" textContentType={register ? 'newPassword' : 'password'} autoComplete={register ? 'new-password' : 'current-password'} onSubmitEditing={submit} style={input} accessibilityLabel="סיסמה" />
       {info && <Text style={[text(14, '600', theme.ok), { marginBottom: 10 }]}>{info}</Text>}
       {error && <Text style={[text(14, '600', theme.warn), { marginBottom: 10 }]}>{error}</Text>}
-      <View style={{ flexDirection: 'row' }}><Btn label={busy ? 'רגע…' : cooldown.left > 0 ? `נסו שוב בעוד ${cooldown.left} שניות` : register ? 'יצירת חשבון' : 'התחברות'} onPress={submit} disabled={busy || cooldown.left > 0} /></View>
+      <View style={{ flexDirection: 'row' }}><Btn label={busy ? 'רגע…' : register && cooldown.left > 0 ? `נסו שוב בעוד ${secs(cooldown.left)}` : register ? 'יצירת חשבון' : 'התחברות'} onPress={submit} disabled={busy || (register && cooldown.left > 0)} /></View>
       <Pressable onPress={() => { setRegister((r) => !r); setError(null); }} style={{ marginTop: 16, alignItems: 'center' }}>
         <Text style={text(14, '600', theme.accent)}>{register ? 'כבר יש לי חשבון' : 'אין לי חשבון עדיין'}</Text>
       </Pressable>
