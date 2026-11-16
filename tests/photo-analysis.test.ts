@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { analyzePhoto, MAX_IMAGE_BYTES, type AnalysisDeps, type PhotoStore } from '../server/photoAnalysis';
 import { geminiProvider, type Provider } from '../server/gemini';
 import { createServer } from '../server/index';
-import type { QuotaLimits, QuotaResult, QuotaStore } from '../server/quota';
+import type { QuotaResult, QuotaStore } from '../server/quota';
+type QuotaLimits = { perDay: number; perMonth: number; globalPerDay: number }; // fixed inside the database in production; modelled here by the fake
 import { createRecognitionTagger, RecognitionError } from '../src/tagging/recognition';
 
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -32,10 +33,10 @@ function fakeAuth(opts: { down?: boolean; unverified?: string[] } = {}) {
 }
 
 /** In-memory quota with the same decision order as consume_ai_quota (day, month, global). */
-function memQuota(): QuotaStore & { used: Map<string, number>; calls: number; broken?: boolean } {
+function memQuota(l: QuotaLimits): QuotaStore & { used: Map<string, number>; calls: number; broken?: boolean } {
   const used = new Map<string, number>();
   const q: any = { used, calls: 0, broken: false,
-    async consume(user: { userId: string }, _k: string, l: QuotaLimits): Promise<QuotaResult> {
+    async consume(user: { userId: string }, _k: string): Promise<QuotaResult> {
       q.calls++;
       if (q.broken) return { allowed: 'error' };
       const mine = used.get(user.userId) ?? 0;
@@ -50,7 +51,7 @@ function memQuota(): QuotaStore & { used: Map<string, number>; calls: number; br
 
 function setup(over: Partial<AnalysisDeps> & { reply?: string; unverified?: string[]; limits?: QuotaLimits; authDown?: boolean; stored?: Record<string, Buffer> } = {}) {
   const auth = fakeAuth({ unverified: over.unverified, down: over.authDown });
-  const quota = memQuota();
+  const quota = memQuota(over.limits ?? { perDay: 2, perMonth: 10, globalPerDay: 100 });
   const provider = { calls: 0, last: undefined as any, async analyze(img: any) { provider.calls++; provider.last = img; return over.reply ?? GARMENT; } };
   const downloads: string[] = [];
   const photos: PhotoStore = {
@@ -62,7 +63,7 @@ function setup(over: Partial<AnalysisDeps> & { reply?: string; unverified?: stri
     },
   };
   const deps: AnalysisDeps = { supabase: { url: 'https://x.supabase.co', anonKey: 'sb_publishable_x', fetchImpl: auth.fetchImpl }, quota, photos,
-    provider: over.provider === undefined && 'provider' in over ? undefined : (over.provider ?? (provider as Provider)), limits: over.limits ?? { perDay: 2, perMonth: 10, globalPerDay: 100 }, inFlight: new Set(), maxImageBytes: over.maxImageBytes };
+    provider: over.provider === undefined && 'provider' in over ? undefined : (over.provider ?? (provider as Provider)), inFlight: new Set(), maxImageBytes: over.maxImageBytes };
   return { deps, auth, quota, provider, downloads };
 }
 const hdr = (u: string) => `Bearer ${tokenOf(u)}`;
@@ -179,6 +180,14 @@ test('Gemini adapter: sends the image + prompt with the key in a header, parses 
   await assert.rejects(geminiProvider({ apiKey: 'k', fetchImpl: (async () => new Response('x', { status: 500 })) as any }).analyze({ bytes: JPEG, mediaType: 'image/jpeg' }, 'p'));
 });
 
+function rawPost(base: string, path: string, headers: Record<string, string>, body: string): Promise<number> {
+  return new Promise((resolve) => {
+    const u = new URL(base);
+    const req = require('node:http').request({ host: u.hostname, port: u.port, path, method: 'POST', headers }, (res: any) => { res.resume(); resolve(res.statusCode); });
+    req.on('error', () => resolve(0)); req.end(body.slice(0, 2));
+  });
+}
+
 test('HTTP: full flow through the server; legacy unauthenticated routes are off; oversize rejected before reading', async () => {
   const s = setup();
   const srv = createServer({ analysis: s.deps }); // legacyUnauthenticated defaults to off
@@ -190,10 +199,15 @@ test('HTTP: full flow through the server; legacy unauthenticated routes are off;
     const ok = await post('/v1/analyze-photo', { image: b64(JPEG) }, { authorization: hdr(A) });
     assert.equal(ok.status, 200); assert.equal(((await ok.json()) as any).suggestion.category, 'dress');
     for (const legacy of ['/analyze', '/receipt', '/product']) assert.equal((await post(legacy, { image: b64(JPEG) })).status, 404, legacy);
-    // the server answers 413 and closes the connection without reading the body; depending on timing the client sees the 413 or a reset
+    // an anonymous caller is refused BEFORE the body is read (the 3 MB body is never buffered); a lying Content-Length is refused outright
+    const anonHuge = await post('/v1/analyze-photo', { image: 'A'.repeat(3_000_000) }).then((r) => r.status, () => 'reset');
+    assert.ok(anonHuge === 401 || anonHuge === 'reset', `got ${anonHuge}`);
+    const lied = await rawPost(base, '/v1/analyze-photo', { authorization: hdr(A), 'content-length': '9999999' }, '{}');
+    assert.equal(lied, 413);
     const huge = await post('/v1/analyze-photo', { image: 'A'.repeat(3_000_000) }, { authorization: hdr(A) }).then((r) => r.status, () => 'reset');
     assert.ok(huge === 413 || huge === 'reset', `got ${huge}`);
     assert.equal(s.provider.calls, 1);
+    assert.equal(s.auth.calls.n >= 2, true); // auth is checked per request, before bodies
     const h: any = await (await fetch(base + '/health')).json();
     assert.deepEqual([h.ok, h.recognition, h.authenticated], [true, true, true]);
   } finally { srv.close(); }
@@ -203,18 +217,37 @@ test('client: sends the session token, maps every failure to a typed error so ma
   const photo = { base64: 'QUJD', mediaType: 'image/jpeg' as const };
   let seen: any;
   const ok = (async (u: string, init: any) => { seen = { u, init }; return { ok: true, status: 200, json: async () => ({ suggestion: { category: 'dress', subtype: 'שמלה', uncertain: ['color'] } }) }; }) as any;
-  const s = await createRecognitionTagger('http://x', ok, 1000, async () => 'jwt-abc').suggest(photo);
+  const s = await createRecognitionTagger('https://x', ok, 1000, async () => 'jwt-abc').suggest(photo);
   assert.deepEqual([s.category, s.uncertain], ['dress', ['color']]); // shown for review, flagged
   assert.equal(seen.init.headers.authorization, 'Bearer jwt-abc'); assert.ok(seen.u.endsWith('/v1/analyze-photo'));
   const kind = async (impl: any, tok: (() => Promise<string | null>) | undefined = async () => 't') => {
-    try { await createRecognitionTagger('http://x', impl, 1000, tok).suggest(photo); return 'ok'; } catch (e) { return (e as RecognitionError).kind; }
+    try { await createRecognitionTagger('https://x', impl, 1000, tok).suggest(photo); return 'ok'; } catch (e) { return (e as RecognitionError).kind; }
   };
   const fail = (status: number, error: string) => (async () => ({ ok: false, status, json: async () => ({ error }) })) as any;
   assert.equal(await kind(ok, async () => null), 'unauthorized'); // signed out: nothing is sent
   assert.equal(await kind(fail(401, 'unauthorized')), 'unauthorized');
   assert.equal(await kind(fail(429, 'quota_exceeded')), 'quota');
+  assert.equal(await kind((async () => ({ ok: false, status: 429, json: async () => ({ error: 'quota_exceeded', scope: 'global' }) })) as any), 'quota_global');
+  assert.equal(await kind(fail(403, 'email_not_verified')), 'unverified');
+  assert.equal(await createRecognitionTagger('http://evil.example', ok, 1000, async () => 't').suggest(photo).then(() => 'sent', (e) => e.kind), 'not_configured'); // token never goes over plain http
+  assert.equal(await createRecognitionTagger('http://localhost:8787', ok, 1000, async () => 't').suggest(photo).then(() => 'sent', (e) => e.kind), 'sent');
   assert.equal(await kind(fail(429, 'busy')), 'busy');
   assert.equal(await kind(fail(413, 'too_large')), 'too_large');
   assert.equal(await kind(fail(502, 'upstream')), 'server');
   assert.equal(await kind((async () => { throw new Error('offline'); }) as any), 'network');
+});
+
+test('rate-limit key: X-Forwarded-For is ignored unless proxy hops are configured (no header-rotation bypass)', async () => {
+  const { clientIp } = await import('../server/index');
+  assert.equal(clientIp('1.2.3.4', '9.9.9.9'), '9.9.9.9');
+  assert.equal(clientIp('1.2.3.4, 5.6.7.8', '9.9.9.9', 0), '9.9.9.9');
+  assert.equal(clientIp('6.6.6.6, 1.2.3.4', '9.9.9.9', 1), '1.2.3.4'); // the rightmost entry is the one OUR proxy appended
+  assert.equal(clientIp('', '9.9.9.9', 1), '9.9.9.9');
+});
+
+test('uppercase owner folder: the app check is case-insensitive, but storage (RLS compares the exact text) is the final judge and costs nothing', async () => {
+  const s = setup({ stored: { [`${A}/${ITEM}/${PHOTO}.jpg`]: JPEG } });
+  const r = await analyzePhoto(hdr(A), { photoPath: `${A.toUpperCase()}/${ITEM}/${PHOTO}.jpg` }, s.deps);
+  assert.equal(r.status, 404); // not 403 (it is the same user) and not 200 (storage does not serve it)
+  assert.equal(s.quota.calls + s.provider.calls, 0);
 });

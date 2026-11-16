@@ -1,6 +1,6 @@
 import { RECOGNITION_PROMPT, extractJson, normalizeRecognition } from '../src/tagging/schema';
-import { verifySession, type SupabaseServerEnv } from './auth';
-import { DEFAULT_LIMITS, type QuotaLimits, type QuotaStore } from './quota';
+import { verifySession, type SupabaseServerEnv, type Verified } from './auth';
+import type { QuotaStore } from './quota';
 import { ProviderError, type Provider } from './gemini';
 
 export const MAX_IMAGE_BYTES = 1_500_000;           // decoded image
@@ -12,7 +12,6 @@ export interface PhotoStore { download(user: { userId: string; token: string }, 
 export interface AnalysisDeps {
   supabase: SupabaseServerEnv;
   quota: QuotaStore;
-  limits?: QuotaLimits;
   provider?: Provider;       // undefined = not configured
   photos: PhotoStore;
   /** users with a request in flight (one at a time per user caps cost multiplication); single-instance only */
@@ -35,10 +34,14 @@ const err = (status: number, error: string, extra: Record<string, unknown> = {})
  * session -> request shape -> ownership -> size/type -> (busy) -> photo load -> QUOTA -> provider.
  * Nothing before the quota step costs money; nothing that fails validation consumes quota.
  */
-export async function analyzePhoto(authorization: string | undefined, body: any, deps: AnalysisDeps): Promise<Out> {
-  const auth = await verifySession(authorization, deps.supabase);
-  if (!auth.ok) return err(auth.status, auth.error);
-  const user = auth.user;
+export async function analyzePhoto(authorization: string | undefined, body: any, deps: AnalysisDeps, verified?: Verified): Promise<Out> {
+  // The HTTP layer verifies BEFORE reading the body and passes the result in; direct callers (tests, scripts) get it verified here.
+  let user = verified;
+  if (!user) {
+    const auth = await verifySession(authorization, deps.supabase);
+    if (!auth.ok) return err(auth.status, auth.error);
+    user = auth.user;
+  }
   if (!deps.provider) return err(503, 'not_configured');
 
   const hasImage = typeof body?.image === 'string' && body.image.length > 0;
@@ -72,13 +75,13 @@ export async function analyzePhoto(authorization: string | undefined, body: any,
     const mediaType = sniffImage(bytes!);
     if (!mediaType) return err(415, 'bad_media'); // magic bytes decide, not the declared type
 
-    const q = await deps.quota.consume(user, 'analyze_photo', deps.limits ?? DEFAULT_LIMITS);
+    const q = await deps.quota.consume(user, 'analyze_photo');
     if (q.allowed === 'error') return err(503, 'quota_unavailable'); // fail closed: no quota decision, no provider call
     if (q.allowed === false) return err(429, 'quota_exceeded', { scope: q.scope, limit: q.limit });
 
     let text: string;
     try { text = await deps.provider.analyze({ bytes: bytes!, mediaType }, RECOGNITION_PROMPT); }
-    catch (e) { return err(502, e instanceof ProviderError ? 'upstream' : 'upstream'); } // the attempt stays counted: no retries that multiply cost
+    catch (e) { return err(502, e instanceof ProviderError && e.kind === 'timeout' ? 'upstream_timeout' : 'upstream'); } // the attempt stays counted: no retries that multiply cost
     const n = normalizeRecognition(extractJson(text));
     if (!n.ok) return n.error === 'not_garment' ? err(422, 'not_garment') : err(502, 'invalid');
     return { status: 200, json: { suggestion: n.suggestion, quota: { used: q.used, limit: q.limit } } };

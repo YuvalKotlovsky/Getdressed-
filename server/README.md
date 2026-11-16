@@ -6,7 +6,9 @@ Body: exactly one of `{ "image": "<base64 jpeg|png|webp, decoded <= 1.5 MB>" }` 
 
 Errors (all JSON `{error}`): 401 `unauthorized`, 403 `email_not_verified` / `forbidden`, 400 `bad_request`/`bad_image`, 413 `too_large`, 415 `bad_media`, 404 `not_found`, 422 `not_garment`, 429 `quota_exceeded` (+`scope`: day|month|global) / `busy` / `rate_limited`, 502 `upstream`/`invalid`, 503 `not_configured` / `quota_unavailable` (fails closed) / `auth_unavailable`.
 
-Cost rules: nothing that fails validation consumes quota; a provider failure stays counted (no free retries); one request at a time per user (single instance); output capped at 500 tokens; 20 s provider timeout. Default limits 20/day, 200/month per user, 500/day for the whole project (`AI_PER_DAY`, `AI_PER_MONTH`, `AI_GLOBAL_PER_DAY`).
+Cost rules: nothing that fails validation consumes quota; a provider failure stays counted (no free retries); one request at a time per user (single instance); output capped at 500 tokens; 20 s provider timeout. Limits are FIXED in the database table `ai_quota_limits` (20/day and 200/month per user, 500/day for the whole project) and cannot be chosen or read by callers; change them with admin tooling only. `consume_ai_quota(kind)` takes no limits, so a user calling it directly can never exceed their own daily cap and cannot inflate the project-wide count beyond it. Many fake accounts could still drain the global ceiling: pair it with sign-up abuse controls before any public launch.
+
+HTTP hardening: the session is verified BEFORE the body is read (anonymous callers cannot make the server buffer a body), body cap 2.6 MB (Content-Length and streaming), 20 simultaneous requests, header/request timeouts, per-IP limiter keyed by the socket address (`TRUST_PROXY_HOPS=n` trusts the n rightmost X-Forwarded-For entries behind your own proxy) with bounded memory, and the legacy routes bind to loopback only.
 
 The old unauthenticated `/analyze`, `/receipt`, `/product` routes are OFF unless `ALLOW_LEGACY_UNAUTHENTICATED=1` (and never in production).
 

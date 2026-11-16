@@ -42,8 +42,8 @@ async function main() {
   const B = await login(env('TEST_B_EMAIL'), env('TEST_B_PASSWORD'));
   const supa = { url: URL_, anonKey: ANON };
   let providerCalls = 0;
-  const deps = (limits = { perDay: 1000, perMonth: 10000, globalPerDay: 100000 }): AnalysisDeps => ({
-    supabase: supa, quota: supabaseQuota(supa), photos: supabasePhotos(supa), limits, inFlight: new Set(),
+  const deps = (): AnalysisDeps => ({
+    supabase: supa, quota: supabaseQuota(supa), photos: supabasePhotos(supa), inFlight: new Set(),
     provider: { async analyze() { providerCalls++; return GARMENT; } },
   });
   const bearer = (t: string) => `Bearer ${t}`;
@@ -88,34 +88,35 @@ async function main() {
     assert((await used(A.sb)) === u && providerCalls === p, 'quota/provider touched');
   });
 
-  await check('quota: durable, per user, exhausted -> 429 with no provider call; B unaffected; direct table writes denied', async () => {
+  await check('quota: FIXED in the database (20/day), exhausted -> 429 with no provider call; durable; B unaffected; counters not editable', async () => {
     const start = await used(A.sb);
-    const limits = { perDay: start + 2, perMonth: 100000, globalPerDay: 1000000 };
     const p = providerCalls;
-    assert((await analyzePhoto(bearer(A.token), { image: JPEG.toString('base64') }, deps(limits))).status === 200, '1st');
-    assert((await analyzePhoto(bearer(A.token), { image: JPEG.toString('base64') }, deps(limits))).status === 200, '2nd');
-    const third: any = await analyzePhoto(bearer(A.token), { image: JPEG.toString('base64') }, deps(limits));
-    assert(third.status === 429 && third.json.scope === 'day', `3rd: ${third.status} ${JSON.stringify(third.json)}`);
-    assert(providerCalls === p + 2, 'provider was called after exhaustion');
-    // the counter lives in the database: a brand-new server instance (fresh deps) still sees it
-    assert((await analyzePhoto(bearer(A.token), { image: JPEG.toString('base64') }, deps(limits))).status === 429, 'not durable');
-    assert((await analyzePhoto(bearer(B.token), { image: JPEG.toString('base64') }, deps({ perDay: (await used(B.sb)) + 1, perMonth: 100000, globalPerDay: 1000000 }))).status === 200, 'B blocked by A usage');
-    // a user cannot edit counters directly
+    let ok = 0, last: any;
+    for (let i = 0; i < 25 && ok < 25; i++) { last = await analyzePhoto(bearer(A.token), { image: JPEG.toString('base64') }, deps()); if (last.status !== 200) break; ok++; }
+    assert(last.status === 429 && last.json.scope === 'day', `expected the 429 day ceiling, got ${last.status} ${JSON.stringify(last.json)}`);
+    assert(start + ok === 20, `ceiling reached after ${start + ok} uses (expected the fixed 20)`);
+    assert(providerCalls === p + ok, 'provider was called after exhaustion');
+    assert((await analyzePhoto(bearer(A.token), { image: JPEG.toString('base64') }, deps())).status === 429, 'not durable across instances');
+    assert((await analyzePhoto(bearer(B.token), { image: JPEG.toString('base64') }, deps())).status === 200, 'B blocked by A usage');
     const ins = await A.sb.from('ai_usage').insert({ user_id: A.id, day: '2000-01-01', kind: 'analyze_photo', count: 0 });
     const upd = await A.sb.from('ai_usage').update({ count: 0 }).eq('user_id', A.id).select();
     const del = await A.sb.from('ai_usage').delete().eq('user_id', A.id).select();
     assert(ins.error, 'insert allowed'); assert((upd.data ?? []).length === 0, 'update changed rows'); assert((del.data ?? []).length === 0, 'delete removed rows');
-    assert((await used(A.sb)) >= start + 2, 'counter was reset');
+    assert((await used(A.sb)) === 20, 'counter was reset or changed');
   });
 
-  await check('RPC guards: anonymous caller, bad limits and unknown kind are refused', async () => {
+  await check('RPC guards: anonymous refused; unknown kind refused; callers cannot choose limits; limits table is unreadable; a user cannot push the global count beyond their own daily cap', async () => {
     const anon = client();
-    const r1 = await anon.rpc('consume_ai_quota', { p_kind: 'analyze_photo', p_day_limit: 5, p_month_limit: 5, p_global_day_limit: 5 });
-    assert(r1.error, 'anon could call the RPC');
-    const r2 = await A.sb.rpc('consume_ai_quota', { p_kind: 'analyze_photo', p_day_limit: 0, p_month_limit: 5, p_global_day_limit: 5 });
-    assert(r2.error, 'zero limit accepted');
-    const r3 = await A.sb.rpc('consume_ai_quota', { p_kind: 'other', p_day_limit: 5, p_month_limit: 5, p_global_day_limit: 5 });
-    assert(r3.error, 'unknown kind accepted');
+    assert((await anon.rpc('consume_ai_quota', { p_kind: 'analyze_photo' })).error, 'anon could call the RPC');
+    assert((await A.sb.rpc('consume_ai_quota', { p_kind: 'other' })).error, 'unknown kind accepted');
+    const old = await A.sb.rpc('consume_ai_quota', { p_kind: 'analyze_photo', p_day_limit: 10000, p_month_limit: 100000, p_global_day_limit: 1000000 });
+    assert(old.error, 'the old limit-taking signature still exists');
+    const lim = await A.sb.from('ai_quota_limits').select('*');
+    assert(lim.error || (lim.data ?? []).length === 0, 'limits table readable by users');
+    // A is already at the fixed daily cap: direct RPC calls cannot add more, so one account cannot inflate the global count
+    const before = await used(A.sb);
+    for (let i = 0; i < 5; i++) { const r: any = await A.sb.rpc('consume_ai_quota', { p_kind: 'analyze_photo' }); assert(!r.error && r.data?.allowed === false, 'direct call went past the cap'); }
+    assert((await used(A.sb)) === before, 'direct calls changed the counter');
   });
 
   console.log(`\nSUMMARY: ${passed} passed, ${failed} failed (provider was a mock; Gemini was never called)`);

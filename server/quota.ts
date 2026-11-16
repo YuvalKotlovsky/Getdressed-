@@ -1,19 +1,16 @@
-/** Durable per-user quota. The database (consume_ai_quota, migration 20261116000000) is the source of truth. */
-export interface QuotaLimits { perDay: number; perMonth: number; globalPerDay: number }
+/** Durable per-user quota. The database is the source of truth: consume_ai_quota(kind) reads FIXED limits from ai_quota_limits (migrations 20261116000000 + 20261116000100); the caller cannot choose them. */
 export type QuotaResult = { allowed: true; used: number; limit: number } | { allowed: false; scope: 'day' | 'month' | 'global'; used: number; limit: number } | { allowed: 'error' };
-export interface QuotaStore { consume(user: { userId: string; token: string }, kind: 'analyze_photo', limits: QuotaLimits): Promise<QuotaResult> }
-
-export const DEFAULT_LIMITS: QuotaLimits = { perDay: 20, perMonth: 200, globalPerDay: 500 };
+export interface QuotaStore { consume(user: { userId: string; token: string }, kind: 'analyze_photo'): Promise<QuotaResult> }
 
 /** Calls the RPC as the caller (their JWT), so the function sees auth.uid() and the verified-email check. */
 export function supabaseQuota(env: { url: string; anonKey: string; fetchImpl?: typeof fetch }): QuotaStore {
   return {
-    async consume(user, kind, l) {
+    async consume(user, kind) {
       try {
         const res = await (env.fetchImpl ?? fetch)(`${env.url.replace(/\/+$/, '')}/rest/v1/rpc/consume_ai_quota`, {
           method: 'POST',
           headers: { authorization: `Bearer ${user.token}`, apikey: env.anonKey, 'content-type': 'application/json' },
-          body: JSON.stringify({ p_kind: kind, p_day_limit: l.perDay, p_month_limit: l.perMonth, p_global_day_limit: l.globalPerDay }),
+          body: JSON.stringify({ p_kind: kind }),
           signal: AbortSignal.timeout(8000),
         });
         if (!res.ok) return { allowed: 'error' };

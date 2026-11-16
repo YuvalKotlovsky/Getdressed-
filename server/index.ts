@@ -9,7 +9,8 @@ import { RECEIPT_PROMPT, normalizeReceipt } from '../src/import/receiptSchema';
 import { fetchProduct } from './product';
 import { analyzePhoto, MAX_BODY_BYTES, supabasePhotos, type AnalysisDeps } from './photoAnalysis';
 import { geminiProvider } from './gemini';
-import { DEFAULT_LIMITS, supabaseQuota } from './quota';
+import { supabaseQuota } from './quota';
+import { verifySession } from './auth';
 import { parseCloudConfig } from '../src/cloud/config';
 
 const MAX_BODY = 4 * 1024 * 1024;
@@ -76,11 +77,26 @@ export interface ServerEnv extends AnalyzeEnv {
   analysis?: AnalysisDeps;
   /** the old unauthenticated /analyze, /receipt, /product routes. OFF unless explicitly enabled (local experiments only). */
   legacyUnauthenticated?: boolean;
+  /** how many reverse proxies sit in front (their X-Forwarded-For entries are trusted). 0 = use the socket address only. */
+  trustProxyHops?: number;
+  /** simultaneous authenticated analysis requests the process accepts */
+  maxConcurrent?: number;
+}
+
+/** The client address used for rate limiting. X-Forwarded-For is only believed for the configured number of trusted hops (counted from the right). */
+export function clientIp(xff: string | undefined, socketAddr: string | undefined, hops = 0): string {
+  if (hops > 0 && xff) {
+    const parts = xff.split(',').map((s) => s.trim()).filter(Boolean);
+    const pick = parts[parts.length - hops];
+    if (pick) return pick.slice(0, 64);
+  }
+  return socketAddr ?? 'unknown';
 }
 
 export function createServer(env: ServerEnv) {
   const hits = new Map<string, number[]>();
-  return http.createServer(async (req, res) => {
+  let active = 0;
+  const srv = http.createServer(async (req, res) => {
     const origin = env.allowedOrigin ?? '*';
     const send = (status: number, json: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': origin, 'access-control-allow-headers': 'content-type,authorization', 'access-control-allow-methods': 'POST,OPTIONS' });
@@ -92,11 +108,19 @@ export function createServer(env: ServerEnv) {
     const isV1 = req.url === '/v1/analyze-photo' && !!env.analysis;
     if (req.method !== 'POST' || (!legacy && !isV1)) return send(404, { error: 'not_found' });
     if (legacy && env.token && req.headers.authorization !== `Bearer ${env.token}`) return send(401, { error: 'unauthorized' });
-    const ip = String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '');
+    const ip = clientIp(String(req.headers['x-forwarded-for'] ?? '') || undefined, req.socket.remoteAddress, env.trustProxyHops);
     const now = Date.now();
+    if (hits.size > 5000) for (const [k, v] of hits) if (!v.some((x) => now - x < 3600_000)) hits.delete(k); // bounded memory
     const recent = (hits.get(ip) ?? []).filter((t) => now - t < 3600_000);
     if (recent.length >= (env.perHour ?? (isV1 ? 120 : 30))) return send(429, { error: 'rate_limited' });
     hits.set(ip, [...recent, now]);
+    let verified: Awaited<ReturnType<typeof verifySession>> | undefined;
+    if (isV1) {
+      // Authenticate BEFORE buffering any body: an anonymous caller cannot make the server hold megabytes.
+      if (active >= (env.maxConcurrent ?? 20)) { res.setHeader('connection', 'close'); return send(503, { error: 'overloaded' }); }
+      verified = await verifySession(req.headers.authorization, env.analysis!.supabase);
+      if (!verified.ok) { res.setHeader('connection', 'close'); return send(verified.status, { error: verified.error }); }
+    }
     const limit = isV1 ? MAX_BODY_BYTES : MAX_BODY;
     if (Number(req.headers['content-length'] ?? 0) > limit) { res.setHeader('connection', 'close'); return send(413, { error: 'too_large' }); } // rejected before reading
     let size = 0;
@@ -108,17 +132,23 @@ export function createServer(env: ServerEnv) {
     }
     let body: unknown;
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400, { error: 'bad_json' }); }
-    const out = isV1 ? await analyzePhoto(req.headers.authorization, body, env.analysis!) : await legacy!(body, env as any);
+    let out: { status: number; json: unknown };
+    if (isV1) {
+      active++;
+      try { out = await analyzePhoto(req.headers.authorization, body, env.analysis!, verified && verified.ok ? verified.user : undefined); } finally { active--; }
+    } else out = await legacy!(body, env as any);
     send(out.status, out.json);
   });
+  srv.headersTimeout = 10_000; srv.requestTimeout = 30_000; // slow-body callers are cut off
+  return srv;
 }
 
 if (process.argv[1] && /server[\\/]index\.ts$/.test(process.argv[1])) {
   const port = Number(process.env.PORT ?? 8787);
   const cfg = parseCloudConfig(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); // refuses service-role / secret keys
-  const num = (v: string | undefined, d: number) => (v && Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
   const supabase = cfg.ok ? { url: cfg.url, anonKey: cfg.anonKey } : undefined;
   if (!supabase) console.warn('SUPABASE_URL / SUPABASE_ANON_KEY (public key) missing or invalid: authenticated analysis is DISABLED');
+  const legacyUnauthenticated = process.env.ALLOW_LEGACY_UNAUTHENTICATED === '1' && process.env.NODE_ENV !== 'production';
   createServer({
     allowedOrigin: process.env.ALLOWED_ORIGIN,
     analysis: supabase ? {
@@ -126,10 +156,10 @@ if (process.argv[1] && /server[\\/]index\.ts$/.test(process.argv[1])) {
       quota: supabaseQuota(supabase),
       photos: supabasePhotos(supabase),
       provider: process.env.GEMINI_API_KEY ? geminiProvider({ apiKey: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL }) : undefined,
-      limits: { perDay: num(process.env.AI_PER_DAY, DEFAULT_LIMITS.perDay), perMonth: num(process.env.AI_PER_MONTH, DEFAULT_LIMITS.perMonth), globalPerDay: num(process.env.AI_GLOBAL_PER_DAY, DEFAULT_LIMITS.globalPerDay) },
       inFlight: new Set<string>(),
     } : undefined,
-    legacyUnauthenticated: process.env.ALLOW_LEGACY_UNAUTHENTICATED === '1' && process.env.NODE_ENV !== 'production',
+    legacyUnauthenticated,
+    trustProxyHops: Number(process.env.TRUST_PROXY_HOPS ?? 0) || 0,
     apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.RECOGNITION_MODEL, token: process.env.RECOGNITION_TOKEN,
-  }).listen(port, () => console.log(`server on :${port} (authenticated analysis ${supabase ? 'on' : 'OFF'}, provider ${process.env.GEMINI_API_KEY ? 'configured' : 'NOT configured'})`));
+  }).listen(port, legacyUnauthenticated ? '127.0.0.1' : undefined, () => console.log(`server on :${port}${legacyUnauthenticated ? ' (LEGACY unauthenticated routes ON, loopback only)' : ''} (authenticated analysis ${supabase ? 'on' : 'OFF'}, provider ${process.env.GEMINI_API_KEY ? 'configured' : 'NOT configured'})`));
 }
