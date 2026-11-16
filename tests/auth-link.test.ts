@@ -21,8 +21,10 @@ test('rate limits are told apart', () => {
   assert.equal(cooldown.kind, 'cooldown'); assert.equal(cooldown.retryAfterSec, 42); assert.match(cooldown.text, /42/);
   const quota = describeAuthError({ code: 'over_email_send_rate_limit', message: 'email rate limit exceeded', status: 429 });
   assert.equal(quota.kind, 'email-quota'); assert.equal(quota.retryAfterSec, undefined);
+  assert.doesNotMatch(quota.text, /\d|שעה|דקה|שניות/); // no wait time is claimed when none is known
   const req = describeAuthError({ code: 'over_request_rate_limit', message: 'Request rate limit reached', status: 429 });
-  assert.equal(req.kind, 'request-rate');
+  assert.equal(req.kind, 'request-rate'); assert.equal(req.retryAfterSec, undefined);
+  assert.doesNotMatch(req.text, /\d|שעה|דקה|שניות/);
   assert.notEqual(cooldown.text, quota.text); assert.notEqual(quota.text, req.text);
 });
 test('other errors map to Hebrew and never leak server text', () => {

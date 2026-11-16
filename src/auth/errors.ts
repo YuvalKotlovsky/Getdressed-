@@ -27,10 +27,10 @@ export function describeAuthError(err: { code?: string; message?: string; status
       const sec = m ? Math.max(1, Number(m[1])) : 60;
       return { kind: 'cooldown', retryAfterSec: sec, text: `בקשה לשליחת מייל כבר נשלחה לכתובת הזו. אפשר לבקש שוב בעוד ${sec === 1 ? 'שנייה אחת' : `${sec} שניות`}.` };
     }
-    return { kind: 'email-quota', text: 'מכסת שליחת המיילים של השירות התמלאה לשעה הקרובה (לא קשור לכתובת שלכם). נסו שוב מאוחר יותר.' };
+    return { kind: 'email-quota', text: 'נשלחו יותר מדי מיילים מהשירות בזמן קצר, ולכן אי אפשר לשלוח מייל אימות כרגע. זה לא קשור לכתובת שלכם. נסו שוב מאוחר יותר.' };
   }
   if (c.includes('over_request_rate_limit') || c.includes('request rate limit') || c.includes('rate limit') || err_status(err) === 429) {
-    return { kind: 'request-rate', retryAfterSec: 60, text: 'יותר מדי בקשות מהרשת הזו. המתינו דקה ונסו שוב.' };
+    return { kind: 'request-rate', text: 'יותר מדי בקשות מהרשת הזו. המתינו מעט ונסו שוב.' };
   }
   if (c.includes('email_address_invalid') || c.includes('validation_failed') || (c.includes('invalid') && c.includes('email'))) return other('כתובת האימייל לא תקינה.');
   if (c.includes('fetch') || c.includes('network')) return other('אין חיבור לשרת. בדקו את החיבור ונסו שוב.');
