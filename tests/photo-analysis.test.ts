@@ -251,3 +251,52 @@ test('uppercase owner folder: the app check is case-insensitive, but storage (RL
   assert.equal(r.status, 404); // not 403 (it is the same user) and not 200 (storage does not serve it)
   assert.equal(s.quota.calls + s.provider.calls, 0);
 });
+
+/** raw socket helper: send `head` (+ optional partial body), then act */
+function rawSocket(base: string, lines: string[], opts: { destroyAfterMs?: number; readUntil?: RegExp } = {}): Promise<string> {
+  return new Promise((resolve) => {
+    const u = new URL(base);
+    const sock = require('node:net').connect(Number(u.port), u.hostname, () => sock.write(lines.join('\r\n') + '\r\n\r\n'));
+    let buf = '';
+    sock.on('data', (d: Buffer) => { buf += d.toString(); if (opts.readUntil?.test(buf)) { sock.destroy(); resolve(buf); } });
+    sock.on('error', () => {}); sock.on('close', () => resolve(buf));
+    if (opts.destroyAfterMs) setTimeout(() => sock.destroy(), opts.destroyAfterMs);
+  });
+}
+
+test('HTTP: a client that aborts mid-body cannot crash the server, and the concurrency slot is released', async () => {
+  const s = setup();
+  const srv = createServer({ analysis: s.deps, maxConcurrent: 2 });
+  const unhandled: unknown[] = []; const onUnhandled = (e: unknown) => unhandled.push(e); process.on('unhandledRejection', onUnhandled);
+  await new Promise<void>((r) => srv.listen(0, r));
+  const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  try {
+    for (let i = 0; i < 5; i++) { // more aborts than the cap: slots must be freed every time
+      await rawSocket(base, ['POST /v1/analyze-photo HTTP/1.1', 'host: x', `authorization: ${hdr(A)}`, 'content-type: application/json', 'content-length: 100000', '', '{"image":"AAAA'], { destroyAfterMs: 60 });
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal((await fetch(base + '/health')).status, 200); // still alive
+    const ok = await fetch(base + '/v1/analyze-photo', { method: 'POST', headers: { 'content-type': 'application/json', authorization: hdr(A) }, body: JSON.stringify({ image: b64(JPEG) }) });
+    assert.equal(ok.status, 200); // slots were released (cap is 2, five aborts happened)
+    assert.deepEqual(unhandled, []);
+  } finally { process.off('unhandledRejection', onUnhandled); srv.close(); }
+});
+
+test('HTTP: an anonymous caller is answered 401 BEFORE it has sent its body; the overload cap answers 503', async () => {
+  const s = setup();
+  const srv = createServer({ analysis: s.deps, maxConcurrent: 1 });
+  await new Promise<void>((r) => srv.listen(0, r));
+  const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  try {
+    // headers announce a 2 MB body that is never sent; a server that read the body first would wait, this one answers at once
+    const anon = await rawSocket(base, ['POST /v1/analyze-photo HTTP/1.1', 'host: x', 'content-type: application/json', 'content-length: 2000000'], { readUntil: /\r\n\r\n/ });
+    assert.match(anon, /^HTTP\/1\.1 401/);
+    // one authenticated request holds the only slot (its body is never completed) -> the next one is 503
+    const hold = rawSocket(base, ['POST /v1/analyze-photo HTTP/1.1', 'host: x', `authorization: ${hdr(A)}`, 'content-type: application/json', 'content-length: 2000000'], { destroyAfterMs: 600 });
+    await new Promise((r) => setTimeout(r, 200));
+    const second = await rawSocket(base, ['POST /v1/analyze-photo HTTP/1.1', 'host: x', `authorization: ${hdr(B)}`, 'content-type: application/json', 'content-length: 10'], { readUntil: /\r\n\r\n/ });
+    assert.match(second, /^HTTP\/1\.1 503/);
+    await hold;
+    assert.equal(s.provider.calls, 0);
+  } finally { srv.close(); }
+});

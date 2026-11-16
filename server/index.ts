@@ -96,7 +96,7 @@ export function clientIp(xff: string | undefined, socketAddr: string | undefined
 export function createServer(env: ServerEnv) {
   const hits = new Map<string, number[]>();
   let active = 0;
-  const srv = http.createServer(async (req, res) => {
+  const handle = async (req: http.IncomingMessage, res: http.ServerResponse) => {
     const origin = env.allowedOrigin ?? '*';
     const send = (status: number, json: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': origin, 'access-control-allow-headers': 'content-type,authorization', 'access-control-allow-methods': 'POST,OPTIONS' });
@@ -118,6 +118,7 @@ export function createServer(env: ServerEnv) {
     if (isV1) {
       // Authenticate BEFORE buffering any body: an anonymous caller cannot make the server hold megabytes.
       if (active >= (env.maxConcurrent ?? 20)) { res.setHeader('connection', 'close'); return send(503, { error: 'overloaded' }); }
+      active++; res.once('close', () => { active--; }); // counted from here (auth call + body buffering + analysis) until the response/socket closes, on every path
       verified = await verifySession(req.headers.authorization, env.analysis!.supabase);
       if (!verified.ok) { res.setHeader('connection', 'close'); return send(verified.status, { error: verified.error }); }
     }
@@ -125,19 +126,25 @@ export function createServer(env: ServerEnv) {
     if (Number(req.headers['content-length'] ?? 0) > limit) { res.setHeader('connection', 'close'); return send(413, { error: 'too_large' }); } // rejected before reading
     let size = 0;
     const chunks: Buffer[] = [];
-    for await (const c of req) {
-      size += (c as Buffer).length;
-      if (size > limit) { res.setHeader('connection', 'close'); return send(413, { error: 'too_large' }); }
-      chunks.push(c as Buffer);
-    }
+    try {
+      for await (const c of req) {
+        size += (c as Buffer).length;
+        if (size > limit) { res.setHeader('connection', 'close'); return send(413, { error: 'too_large' }); }
+        chunks.push(c as Buffer);
+      }
+    } catch { return; } // client aborted or timed out mid-body: nothing to answer, and it must never take the process down
     let body: unknown;
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400, { error: 'bad_json' }); }
     let out: { status: number; json: unknown };
-    if (isV1) {
-      active++;
-      try { out = await analyzePhoto(req.headers.authorization, body, env.analysis!, verified && verified.ok ? verified.user : undefined); } finally { active--; }
-    } else out = await legacy!(body, env as any);
+    if (isV1) out = await analyzePhoto(req.headers.authorization, body, env.analysis!, verified && verified.ok ? verified.user : undefined);
+    else out = await legacy!(body, env as any);
     send(out.status, out.json);
+  };
+  const srv = http.createServer((req, res) => {
+    req.on('error', () => {});
+    handle(req, res).catch(() => { // last line of defence: an unexpected error answers 500 instead of becoming an unhandled rejection
+      try { if (!res.headersSent) { res.statusCode = 500; res.end('{"error":"server"}'); } else res.destroy(); } catch { /* socket already gone */ }
+    });
   });
   srv.headersTimeout = 10_000; srv.requestTimeout = 30_000; // slow-body callers are cut off
   return srv;
