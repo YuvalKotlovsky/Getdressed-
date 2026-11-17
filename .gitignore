@@ -21,3 +21,6 @@ ios/
 android/
 .DS_Store
 supabase/.temp/
+
+# Gemini pilot photos, manifest, results (never commit)
+/pilot/

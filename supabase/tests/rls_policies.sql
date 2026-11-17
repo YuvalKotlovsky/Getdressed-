@@ -184,6 +184,34 @@ begin
     end if;
   end loop;
 
+  -- 8. AI quota table and function (migration 20261116000000).
+  if not exists (select 1 from pg_class where oid = 'public.ai_usage'::regclass and relrowsecurity and relforcerowsecurity) then
+    raise exception 'RLS CHECK FAILED: public.ai_usage must have forced RLS';
+  end if;
+  if has_table_privilege('anon', 'public.ai_usage', 'select,insert,update,delete')
+     or has_table_privilege('authenticated', 'public.ai_usage', 'insert,update,delete') then
+    raise exception 'RLS CHECK FAILED: ai_usage grants are too broad (only select for authenticated)';
+  end if;
+  if not has_function_privilege('authenticated', 'public.consume_ai_quota(text)', 'execute')
+     or has_function_privilege('anon', 'public.consume_ai_quota(text)', 'execute') then
+    raise exception 'RLS CHECK FAILED: consume_ai_quota must be executable by authenticated only';
+  end if;
+
+  if not exists (select 1 from pg_class where oid = 'public.ai_quota_limits'::regclass and relrowsecurity and relforcerowsecurity)
+     or has_table_privilege('anon', 'public.ai_quota_limits', 'select,insert,update,delete')
+     or has_table_privilege('authenticated', 'public.ai_quota_limits', 'select,insert,update,delete') then
+    raise exception 'RLS CHECK FAILED: ai_quota_limits must have forced RLS and no user grants (limits are not caller-controlled)';
+  end if;
+  if exists (select 1 from pg_proc where proname = 'consume_ai_quota' and pronargs <> 1) then
+    raise exception 'RLS CHECK FAILED: a limit-taking consume_ai_quota overload exists';
+  end if;
+
+  if not exists (select 1 from pg_class where oid = 'public.ai_quota_server_keys'::regclass and relrowsecurity and relforcerowsecurity)
+     or has_table_privilege('anon', 'public.ai_quota_server_keys', 'select,insert,update,delete')
+     or has_table_privilege('authenticated', 'public.ai_quota_server_keys', 'select,insert,update,delete') then
+    raise exception 'RLS CHECK FAILED: ai_quota_server_keys must have forced RLS and no user grants';
+  end if;
+
   raise notice 'ALL RLS CATALOG CHECKS PASSED';
 end
 $$;

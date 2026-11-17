@@ -23,8 +23,8 @@ export interface TagSuggestion {
 }
 
 export const CATEGORIES: Category[] = ['top', 'bottom', 'dress', 'shoes', 'activewear', 'outerwear'];
-const OCCASIONS: Occasion[] = ['work', 'workout', 'casual', 'evening', 'formal'];
-const WEATHERS: Weather[] = ['hot', 'mild', 'cold'];
+export const OCCASIONS: Occasion[] = ['work', 'workout', 'casual', 'evening', 'formal'];
+export const WEATHERS: Weather[] = ['hot', 'mild', 'cold'];
 export const UNCERTAIN_BELOW = 0.6;
 
 export const partForCategory = (c: Category, subtype = ''): Part => {
@@ -64,6 +64,24 @@ Rules:
 - dressiness: 1 casual, 2 smart, 3 formal. weather: temperatures the garment suits (hot = light/open/airy, cold = heavy/closed/warm, suede closed shoes => mild and cold).
 - brand: only if a brand or model is NAMED in a visible caption/text (source "caption"), shown by a visible logo (source "logo"), or the design is unmistakable (source "shape", confidence <= 0.6). Otherwise null. Never guess a brand from colour alone. Captions may be Hebrew (e.g. בירקנשטוק בוסטון = Birkenstock Boston); write the brand in English.
 - Use low confidence (<0.6) when ambiguous, blurry or partly hidden. If there is no single garment, set "garment":false.`;
+
+/** JSON Schema for the model's structured output (same shape as RECOGNITION_PROMPT). Values are STILL validated by normalizeRecognition: structured output guarantees syntax, not truth. */
+export const RECOGNITION_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    garment: { type: 'boolean' },
+    multiple: { type: 'boolean' },
+    category: { type: 'string', enum: [...CATEGORIES] },
+    subtype: { type: 'string' },
+    color: { type: 'string', enum: Object.keys(COLORS) },
+    occasions: { type: 'array', items: { type: 'string', enum: [...OCCASIONS] } },
+    dressiness: { type: 'integer', enum: [1, 2, 3] },
+    weather: { type: 'array', items: { type: 'string', enum: [...WEATHERS] } },
+    brand: { type: ['object', 'null'], properties: { brand: { type: 'string' }, model: { type: 'string' }, source: { type: 'string', enum: ['caption', 'logo', 'shape'] } }, required: ['brand', 'source'] },
+    confidence: { type: 'object', properties: Object.fromEntries(['category', 'subtype', 'color', 'occasions', 'dressiness', 'weather', 'brand'].map((k) => [k, { type: 'number' }])) },
+  },
+  required: ['garment'],
+} as const;
 
 export function extractJson(text: string): unknown {
   const m = text.match(/\{[\s\S]*\}/);
