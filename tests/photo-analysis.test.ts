@@ -177,7 +177,7 @@ test('Gemini adapter (Interactions API): image + prompt + JSON schema, key in a 
   assert.deepEqual(r.usage, { input: 2000, output: 250, thoughts: 0, total: 2250 });
   assert.ok(Math.abs(estimateCostUSD(r.usage)! - (2000 * 0.30 + 250 * 2.50) / 1e6) < 1e-12);
   assert.ok(seen.url.endsWith('/v1beta/interactions')); assert.ok(!seen.url.includes('AIza-secret'));
-  assert.equal(seen.init.headers['x-goog-api-key'], 'AIza-secret');
+  assert.equal(seen.init.headers['x-goog-api-key'], 'AIza-secret'); assert.equal(seen.init.headers['api-revision'], '2026-05-20');
   const body = JSON.parse(seen.init.body);
   assert.equal(body.model, 'gemini-3.5-flash-lite');
   assert.deepEqual(body.input[1], { type: 'image', data: JPEG.toString('base64'), mime_type: 'image/jpeg' });
@@ -314,4 +314,29 @@ test('HTTP: an anonymous caller is answered 401 BEFORE it has sent its body; the
     await hold;
     assert.equal(s.provider.calls, 0);
   } finally { srv.close(); }
+});
+
+test('pilot guard: at most 5 outbound Gemini calls in total, counted before the call, no retries, survives reruns', async () => {
+  const { cappedProvider } = await import('../scripts/pilot-core');
+  let outbound = 0;
+  const fetchImpl = (async () => { outbound++; return new Response(JSON.stringify({ status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'text', text: GARMENT }] }] }), { status: 200 }); }) as any;
+  let stored = 0; const counter = { read: () => stored, write: (n: number) => { stored = n; } };
+  const mk = () => cappedProvider(geminiProvider({ apiKey: 'k', fetchImpl }), 5, counter);
+  const results: string[] = [];
+  for (let i = 0; i < 8; i++) results.push(await mk().analyze({ bytes: JPEG, mediaType: 'image/jpeg' }, 'p').then(() => 'ok', (e: Error) => e.message));
+  assert.equal(outbound, 5); assert.equal(stored, 5);
+  assert.deepEqual(results.slice(5), ['pilot call cap reached', 'pilot call cap reached', 'pilot call cap reached']);
+  // a NEW provider/process with the same persisted counter cannot spend more
+  assert.equal(await mk().analyze({ bytes: JPEG, mediaType: 'image/jpeg' }, 'p').then(() => 'ok', (e: Error) => e.message), 'pilot call cap reached'); assert.equal(outbound, 5);
+  // failures count and are never retried: one HTTP attempt per photo, even on 500 or a network error
+  let n500 = 0; stored = 0;
+  const failing = (async () => { n500++; return new Response('x', { status: 500 }); }) as any;
+  const f = cappedProvider(geminiProvider({ apiKey: 'k', fetchImpl: failing }), 5, counter);
+  for (let i = 0; i < 3; i++) await f.analyze({ bytes: JPEG, mediaType: 'image/jpeg' }, 'p').catch(() => {});
+  assert.equal(n500, 3); assert.equal(stored, 3);
+  // the cap itself cannot be raised above the hard ceiling of 8
+  stored = 0; let o2 = 0;
+  const big = cappedProvider(geminiProvider({ apiKey: 'k', fetchImpl: (async () => { o2++; return new Response(JSON.stringify({ status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'text', text: GARMENT }] }] }), { status: 200 }); }) as any }), 100, counter);
+  for (let i = 0; i < 20; i++) await big.analyze({ bytes: JPEG, mediaType: 'image/jpeg' }, 'p').catch(() => {});
+  assert.equal(o2, 8);
 });

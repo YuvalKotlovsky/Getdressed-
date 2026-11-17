@@ -20,10 +20,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
 import { analyzePhoto, supabasePhotos, type AnalysisDeps } from '../server/photoAnalysis';
 import { supabaseQuota } from '../server/quota';
-import { DEFAULT_GEMINI_MODEL, PRICE_PER_M, estimateCostUSD, geminiProvider, type ProviderResult, type Usage } from '../server/gemini';
+import { DEFAULT_GEMINI_MODEL, PRICE_PER_M, estimateCostUSD, geminiProvider, type Usage } from '../server/gemini';
+import { HARD_MAX_CALLS, cappedProvider } from './pilot-core';
 
 const env = (k: string) => (process.env[k] ?? '').trim();
-const HARD_MAX = 8;
 const live = process.argv.includes('--confirm');
 const DEV_REF = 'lenqqdflencoxgpcdlrg';
 
@@ -32,7 +32,7 @@ if (need.some((k) => !env(k))) { console.log('PENDING: set', need.filter((k) => 
 const URL_ = env('SUPABASE_URL').replace(/\/+$/, '');
 if (env('EXPECT_PROJECT_REF') !== DEV_REF || new URL(URL_).hostname !== `${DEV_REF}.supabase.co`) { console.log('REFUSING: the pilot runs against the DEVELOPMENT project only'); process.exit(1); }
 if (env('SUPABASE_ANON_KEY').startsWith('sb_secret_')) { console.log('REFUSING: secret Supabase key'); process.exit(1); }
-const maxCalls = Math.min(HARD_MAX, Math.max(1, Number(env('PILOT_MAX_CALLS') || 5)));
+const maxCalls = Math.min(HARD_MAX_CALLS, Math.max(1, Number(env('PILOT_MAX_CALLS') || 5)));
 
 type Entry = { file: string; expect?: { category?: string; note?: string } };
 const dir = 'pilot';
@@ -57,13 +57,7 @@ if (!live) { console.log('DRY RUN: no call was made. Re-run with --confirm to ma
   const deps: AnalysisDeps = {
     supabase: { url: URL_, anonKey: env('SUPABASE_ANON_KEY') }, quota: supabaseQuota({ url: URL_, anonKey: env('SUPABASE_ANON_KEY'), serverKey: env('AI_QUOTA_SERVER_KEY') }),
     photos: supabasePhotos({ url: URL_, anonKey: env('SUPABASE_ANON_KEY') }), inFlight: new Set(),
-    provider: { async analyze(img, prompt) {
-      const used = callsSoFar();
-      if (used >= maxCalls) throw new Error('pilot call cap reached');
-      writeFileSync(counterFile, String(used + 1)); // counted BEFORE the call
-      const r = (await base.analyze(img, prompt)) as ProviderResult;
-      last = r.usage; return r;
-    } },
+    provider: cappedProvider(base, maxCalls, { read: callsSoFar, write: (n) => writeFileSync(counterFile, String(n)) }, (r) => { last = r?.usage; }),
     onUsage: (r) => { lastMs = r.ms; },
   };
   const results: any[] = [];

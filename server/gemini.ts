@@ -12,6 +12,8 @@ export interface Provider { analyze(image: { bytes: Buffer; mediaType: string },
 
 export class ProviderError extends Error { constructor(public kind: 'upstream' | 'timeout') { super(kind); } }
 
+/** Pinned API revision, as shown in Google's structured-output and api-key REST examples (aistudio.google.com/docs/structured-output). */
+export const API_REVISION = '2026-05-20';
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 /** USD per 1M tokens, paid Standard tier for gemini-3.5-flash-lite as printed on Google's pricing page (2026-11-16). Output includes thinking tokens. */
 export const PRICE_PER_M = { input: 0.30, output: 2.50 };
@@ -25,7 +27,7 @@ export function geminiProvider(env: { apiKey: string; model?: string; fetchImpl?
       try {
         res = await (env.fetchImpl ?? fetch)('https://generativelanguage.googleapis.com/v1beta/interactions', {
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-goog-api-key': env.apiKey },
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': env.apiKey, 'api-revision': API_REVISION },
           body: JSON.stringify({
             model,
             input: [{ type: 'text', text: prompt }, { type: 'image', data: image.bytes.toString('base64'), mime_type: image.mediaType }],

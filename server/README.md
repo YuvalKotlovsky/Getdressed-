@@ -45,9 +45,26 @@ Rotate by repeating with a new key (the old one stops working immediately). Alwa
 - **Price (paid Standard tier, per 1M tokens, as printed 2026-11-16):** input $0.30 (text/image), output $2.50 including thinking tokens. **Free tier:** free of charge BUT content is used to improve Google's products; paid tier: not used. Use a paid-tier key for real clothing photos.
 - **Not confirmed from official pages:** a worked inline-image Interactions curl with `usage` in the response, and `generateContent` support for `gemini-3.5-flash-lite` (not used here). The pilot is the first real check of the request/response shape.
 
+## Billing controls (official Google docs, read 2026-11-17; none of these pages shows its own date)
+Distinguish **hard stops** from **alerts**:
+- **Prepaid credit = the practical hard stop.** Paid tier means linking a billing account and prepaying a minimum of **$5** (billing page). "The Gemini API will only serve requests if you have a positive Prepay credit balance"; at zero balance requests fail with **HTTP 402** and all keys on that billing account stop. Latency: overages are possible during the roughly **10 minute** billing pipeline delay. For a $0.007 pilot, a $5 prepay is already a hard ceiling of $5 on what can ever be spent; the docs do not say whether unspent prepaid credit is refundable (check before paying).
+- **AI Studio project spend cap** (Spend page > "Monthly spend cap"): labelled **Experimental**; billing data can lag up to ~10 minutes, so "you may experience overages beyond your project cap". The page does not say it blocks requests, only that overages can occur.
+- **Cloud Billing "spend cap" budget** (separate type from a normal budget; Gemini API, service `generativelanguage.googleapis.com`, one project + one service, monthly): "usage of your specified services is automatically paused for the remainder of the budget period"; new requests are paused. Enforcement "isn't instantaneous" and you stay responsible for overage from reporting latency. An existing alerts-only budget cannot be converted; create a spend-cap budget.
+- **Budget ALERTS do not cap anything:** "Setting an alerts-only budget doesn't automatically cap Google Cloud ... usage or spending." (First notification can take hours.) Programmatically disabling billing via Pub/Sub is mentioned, but that page was not read.
+- **Quotas:** rate limits are per project (not per key); the docs do not say a customer can lower the RPD quota. Tier-1 paid limits for this model are not stated on the rate-limits page (see AI Studio). Tier 1 also has a monthly usage cap of $250 at the billing-account level.
+- **Keys** have no billing settings of their own (they inherit the project's limits): restrict a key to the Gemini API, create it as an "auth key" (default for new AI Studio keys since 2026-05-28; unrestricted standard keys are rejected), rotate by creating a new key, deploying, then disabling the old one.
+- **Pilot protection in this repo (independent of Google):** hard cap of 5 outbound calls (see below).
+- **Free tier alternative:** no billing needed, but "Used to improve our products: Yes" (paid: No). Only use it with non-personal test photos.
+
 ## Configure a server-side DEV key (steps; nothing here has been run with a real key)
-1. In Google AI Studio create a key for a DEV-only project, on the paid tier (so photos are not used for training), with a low budget alert/spend cap at Google. Starting 2026-05-28 new AI Studio keys are "auth keys" and the API rejects unrestricted standard keys: use the key type the console offers for server use.
-2. Put it ONLY in a git-ignored file, never in chat, Git or the app: `printf 'GEMINI_API_KEY=%s\nGEMINI_MODEL=gemini-3.5-flash-lite\nPILOT_MAX_CALLS=5\n' '<key>' > .env.pilot` (`.env.*` is already ignored).
+1. In Google AI Studio create a key in a DEV-only project. Decide the money control first (see above): paid tier with the $5 prepay minimum (hard stop at zero) and, if you like, the project spend cap or a Cloud Billing spend-cap budget as extra layers. Restrict the key to the Gemini API.
+2. Store the key LOCALLY without it appearing in chat, logs, shell history or Git. In a terminal on your machine (zsh), paste when prompted (nothing is echoed):
+```
+read -rs "K?Gemini API key: "; echo
+( umask 077; printf 'GEMINI_API_KEY=%s\nGEMINI_MODEL=gemini-3.5-flash-lite\nPILOT_MAX_CALLS=5\n' "$K" > .env.pilot ); unset K
+git check-ignore .env.pilot && echo "ignored by Git: OK"     # must print the path and OK
+```
+`.env.*` is git-ignored; the scripts never print the key (the adapter sends it only in the `x-goog-api-key` header). Do not paste the key into chat. If it leaks, disable it in AI Studio and create a new one.
 3. Run the server locally against the dev project: `npx tsx --env-file=.env.verify --env-file=.env.pilot server/index.ts` (needs `SUPABASE_URL`, `SUPABASE_ANON_KEY` (public key), `AI_QUOTA_SERVER_KEY`; set `ALLOWED_ORIGIN=http://localhost:8081` for a local web build). The server logs one JSON usage line per provider call (latency and tokens, no user id, no photo).
 
 ## Dev pilot (5 photos, cap enforced in code) - NOT RUN
